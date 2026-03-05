@@ -54,11 +54,10 @@ namespace AdbcDrivers.HiveServer2.Hive2
             GetCrossReferenceCommandName + "," +
             GetColumnsExtendedCommandName;
 
-        // Add constants for PK and FK field names and prefixes
-        protected static readonly string[] PrimaryKeyFields = new[] { "COLUMN_NAME" };
-        protected static readonly string[] ForeignKeyFields = new[] { "PKCOLUMN_NAME", "PKTABLE_CAT", "PKTABLE_SCHEM", "PKTABLE_NAME", "FKCOLUMN_NAME", "FK_NAME", "KEQ_SEQ" };
-        protected const string PrimaryKeyPrefix = "PK_";
-        protected const string ForeignKeyPrefix = "FK_";
+        protected static readonly string[] PrimaryKeyFields = MetadataColumnNames.PrimaryKeyFields;
+        protected static readonly string[] ForeignKeyFields = MetadataColumnNames.ForeignKeyFields;
+        protected const string PrimaryKeyPrefix = MetadataColumnNames.PrimaryKeyPrefix;
+        protected const string ForeignKeyPrefix = MetadataColumnNames.ForeignKeyPrefix;
         private const string ClassName = nameof(HiveServer2Statement);
 
         // Lock to ensure consistent access to TokenSource
@@ -592,92 +591,62 @@ namespace AdbcDrivers.HiveServer2.Hive2
         protected internal QueryResult EnhanceGetColumnsResult(Schema originalSchema, IReadOnlyList<IArrowArray> originalData,
             int rowCount, TGetResultSetMetadataResp metadata, TRowSet rowSet)
         {
-            // Create a column map using Connection's GetColumnIndexMap method
             var columnMap = Connection.GetColumnIndexMap(metadata.Schema.Columns);
-
-            // Get column indices - we know these columns always exist
             int typeNameIndex = columnMap["TYPE_NAME"];
             int dataTypeIndex = columnMap["DATA_TYPE"];
             int columnSizeIndex = columnMap["COLUMN_SIZE"];
             int decimalDigitsIndex = columnMap["DECIMAL_DIGITS"];
 
-            // Extract the existing arrays
             StringArray typeNames = (StringArray)originalData[typeNameIndex];
             Int32Array originalColumnSizes = (Int32Array)originalData[columnSizeIndex];
             Int32Array originalDecimalDigits = (Int32Array)originalData[decimalDigitsIndex];
+            ReadOnlySpan<int> rawDataTypes = rowSet.Columns[dataTypeIndex].I32Val.Values.Values;
 
-            // Create enhanced schema with BASE_TYPE_NAME column
             var enhancedFields = originalSchema.FieldsList.ToList();
-            enhancedFields.Add(new Field("BASE_TYPE_NAME", StringType.Default, true));
+            enhancedFields.Add(new Field(MetadataColumnNames.BaseTypeName, StringType.Default, true));
             Schema enhancedSchema = new Schema(enhancedFields, originalSchema.Metadata);
 
-            // Pre-allocate arrays to store our values
             int length = typeNames.Length;
-            List<string> baseTypeNames = new List<string>(length);
-            List<int> columnSizeValues = new List<int>(length);
-            List<int> decimalDigitsValues = new List<int>(length);
+            var baseTypeNames = new List<string>(length);
+            var columnSizeValues = new List<int>(length);
+            var decimalDigitsValues = new List<int>(length);
 
-            // Process each row
             for (int i = 0; i < length; i++)
             {
-                string? typeName = typeNames.GetString(i);
-                short colType = (short)rowSet.Columns[dataTypeIndex].I32Val.Values.Values[i];
+                string typeName = typeNames.GetString(i) ?? string.Empty;
+                short colType = (short)rawDataTypes[i];
                 int columnSize = originalColumnSizes.GetValue(i).GetValueOrDefault();
                 int decimalDigits = originalDecimalDigits.GetValue(i).GetValueOrDefault();
 
-                // Create a TableInfo for this row
-                var tableInfo = new HiveServer2Connection.TableInfo(string.Empty);
+                var tableInfo = new TableInfo(string.Empty);
+                Connection.SetPrecisionScaleAndTypeName(colType, typeName, tableInfo, columnSize, decimalDigits);
 
-                // Process all types through SetPrecisionScaleAndTypeName
-                Connection.SetPrecisionScaleAndTypeName(colType, typeName ?? string.Empty, tableInfo, columnSize, decimalDigits);
+                baseTypeNames.Add(
+                    tableInfo.BaseTypeName.Count > 0
+                        ? tableInfo.BaseTypeName[0] ?? typeName
+                        : typeName);
 
-                // Get base type name
-                string baseTypeName;
-                if (tableInfo.BaseTypeName.Count > 0)
-                {
-                    string? baseTypeNameValue = tableInfo.BaseTypeName[0];
-                    baseTypeName = baseTypeNameValue ?? string.Empty;
-                }
-                else
-                {
-                    baseTypeName = typeName ?? string.Empty;
-                }
-                baseTypeNames.Add(baseTypeName);
+                columnSizeValues.Add(
+                    tableInfo.Precision.Count > 0
+                        ? tableInfo.Precision[0].GetValueOrDefault(columnSize)
+                        : columnSize);
 
-                // Get precision/scale values
-                if (tableInfo.Precision.Count > 0)
-                {
-                    int? precisionValue = tableInfo.Precision[0];
-                    columnSizeValues.Add(precisionValue.GetValueOrDefault(columnSize));
-                }
-                else
-                {
-                    columnSizeValues.Add(columnSize);
-                }
-
-                if (tableInfo.Scale.Count > 0)
-                {
-                    int? scaleValue = tableInfo.Scale[0];
-                    decimalDigitsValues.Add(scaleValue.GetValueOrDefault(decimalDigits));
-                }
-                else
-                {
-                    decimalDigitsValues.Add(decimalDigits);
-                }
+                decimalDigitsValues.Add(
+                    tableInfo.Scale.Count > 0
+                        ? tableInfo.Scale[0].GetValueOrDefault((short)decimalDigits)
+                        : decimalDigits);
             }
 
-            // Create the Arrow arrays directly from our data arrays
             StringArray baseTypeNameArray = new StringArray.Builder().AppendRange(baseTypeNames).Build();
             Int32Array columnSizeArray = new Int32Array.Builder().AppendRange(columnSizeValues).Build();
             Int32Array decimalDigitsArray = new Int32Array.Builder().AppendRange(decimalDigitsValues).Build();
 
-            // Create enhanced data with modified columns
             var enhancedData = new List<IArrowArray>(originalData);
             enhancedData[columnSizeIndex] = columnSizeArray;
             enhancedData[decimalDigitsIndex] = decimalDigitsArray;
             enhancedData.Add(baseTypeNameArray);
 
-            return new QueryResult(rowCount, new HiveServer2Connection.HiveInfoArrowStream(enhancedSchema, enhancedData));
+            return new QueryResult(rowCount, new HiveInfoArrowStream(enhancedSchema, enhancedData));
         }
 
         // Helper method to read all batches from a stream
@@ -797,7 +766,7 @@ namespace AdbcDrivers.HiveServer2.Hive2
             // 6. Return the combined result
             var combinedSchema = new Schema(allFields, columnsSchema.Metadata);
 
-            return new QueryResult(totalRows, new HiveServer2Connection.HiveInfoArrowStream(combinedSchema, combinedData));
+            return new QueryResult(totalRows, new HiveInfoArrowStream(combinedSchema, combinedData));
         }
 
         // Helper method to create an empty result with the complete extended columns schema
@@ -867,7 +836,7 @@ namespace AdbcDrivers.HiveServer2.Hive2
                 }
             }
 
-            return new QueryResult(0, new HiveServer2Connection.HiveInfoArrowStream(combinedSchema, combinedData));
+            return new QueryResult(0, new HiveInfoArrowStream(combinedSchema, combinedData));
         }
 
         /**
@@ -880,7 +849,7 @@ namespace AdbcDrivers.HiveServer2.Hive2
          * 3. Build a mapping of column names to their relationship values
          * 4. Create arrays for each field, aligning values with the main column result
          */
-        private async Task ProcessRelationshipDataSafe(QueryResult result, string prefix, string relationColNameField,
+        internal async Task ProcessRelationshipDataSafe(QueryResult result, string prefix, string relationColNameField,
             string[] includeFields, StringArray colNames, int rowCount,
             List<Field> allFields, List<IArrowArray> combinedData, CancellationToken cancellationToken)
         {

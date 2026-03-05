@@ -48,7 +48,7 @@ using Thrift.Transport;
 
 namespace AdbcDrivers.HiveServer2.Hive2
 {
-    internal abstract class HiveServer2Connection : TracingConnection
+    internal abstract class HiveServer2Connection : TracingConnection, IGetObjectsDataProvider
     {
         internal const bool InfoVendorSql = true;
         internal const long BatchSizeDefault = 50000;
@@ -67,6 +67,26 @@ namespace AdbcDrivers.HiveServer2.Hive2
         private readonly string _traceInstanceId = Guid.NewGuid().ToString("N");
         private readonly FileActivityListener? _fileActivityListener;
 
+        // Standard column name constants used by subclasses when mapping
+        // metadata result sets (e.g. in GetColumnsMetadataColumnNames).
+        internal const string ColumnDef = MetadataColumnNames.ColumnDef;
+        internal const string ColumnName = MetadataColumnNames.ColumnName;
+        internal const string DataType = MetadataColumnNames.DataType;
+        internal const string IsAutoIncrement = MetadataColumnNames.IsAutoIncrement;
+        internal const string IsNullable = MetadataColumnNames.IsNullable;
+        internal const string OrdinalPosition = MetadataColumnNames.OrdinalPosition;
+        internal const string TableCat = MetadataColumnNames.TableCat;
+        internal const string TableCatalog = MetadataColumnNames.TableCatalog;
+        internal const string TableName = MetadataColumnNames.TableName;
+        internal const string TableSchem = MetadataColumnNames.TableSchem;
+        internal const string TableMd = MetadataColumnNames.TableMd;
+        internal const string TableType = MetadataColumnNames.TableType;
+        internal const string TypeName = MetadataColumnNames.TypeName;
+        internal const string Nullable = MetadataColumnNames.Nullable;
+        internal const string ColumnSize = MetadataColumnNames.ColumnSize;
+        internal const string DecimalDigits = MetadataColumnNames.DecimalDigits;
+        internal const string BufferLength = MetadataColumnNames.BufferLength;
+
         readonly AdbcInfoCode[] infoSupportedCodes = [
             AdbcInfoCode.DriverName,
             AdbcInfoCode.DriverVersion,
@@ -76,23 +96,6 @@ namespace AdbcDrivers.HiveServer2.Hive2
             AdbcInfoCode.VendorVersion,
         ];
 
-        internal const string ColumnDef = "COLUMN_DEF";
-        internal const string ColumnName = "COLUMN_NAME";
-        internal const string DataType = "DATA_TYPE";
-        internal const string IsAutoIncrement = "IS_AUTO_INCREMENT";
-        internal const string IsNullable = "IS_NULLABLE";
-        internal const string OrdinalPosition = "ORDINAL_POSITION";
-        internal const string TableCat = "TABLE_CAT";
-        internal const string TableCatalog = "TABLE_CATALOG";
-        internal const string TableName = "TABLE_NAME";
-        internal const string TableSchem = "TABLE_SCHEM";
-        internal const string TableMd = "TABLE_MD";
-        internal const string TableType = "TABLE_TYPE";
-        internal const string TypeName = "TYPE_NAME";
-        internal const string Nullable = "NULLABLE";
-        internal const string ColumnSize = "COLUMN_SIZE";
-        internal const string DecimalDigits = "DECIMAL_DIGITS";
-        internal const string BufferLength = "BUFFER_LENGTH";
 
         /// <summary>
         /// The GetColumns metadata call returns a result with different column names
@@ -514,7 +517,6 @@ namespace AdbcDrivers.HiveServer2.Hive2
                     throw new InvalidOperationException("Invalid session");
                 }
 
-                Dictionary<string, Dictionary<string, Dictionary<string, TableInfo>>> catalogMap = new Dictionary<string, Dictionary<string, Dictionary<string, TableInfo>>>();
                 CancellationToken cancellationToken = ApacheUtility.GetCancellationToken(QueryTimeoutSeconds, ApacheUtility.TimeUnit.Seconds);
                 try
                 {
@@ -525,167 +527,11 @@ namespace AdbcDrivers.HiveServer2.Hive2
                         tableNamePattern = tableNamePattern?.ToLower();
                         columnNamePattern = columnNamePattern?.ToLower();
                     }
-                    if (depth == GetObjectsDepth.All || depth >= GetObjectsDepth.Catalogs)
-                    {
-                        TGetCatalogsResp getCatalogsResp = GetCatalogsAsync(cancellationToken).Result;
 
-                        var catalogsMetadata = GetResultSetMetadataAsync(getCatalogsResp, cancellationToken).Result;
-                        IReadOnlyDictionary<string, int> columnMap = GetColumnIndexMap(catalogsMetadata.Schema.Columns);
-
-                        string catalogRegexp = PatternToRegEx(catalogPattern);
-                        TRowSet rowSet = GetRowSetAsync(getCatalogsResp, cancellationToken).Result;
-                        IReadOnlyList<string> list = rowSet.Columns[columnMap[TableCat]].StringVal.Values;
-                        for (int i = 0; i < list.Count; i++)
-                        {
-                            string col = list[i];
-                            string catalog = col;
-
-                            if (Regex.IsMatch(catalog, catalogRegexp, RegexOptions.IgnoreCase))
-                            {
-                                catalogMap.Add(catalog, new Dictionary<string, Dictionary<string, TableInfo>>());
-                            }
-                        }
-                        // Handle the case where server does not support 'catalog' in the namespace.
-                        if (list.Count == 0 && string.IsNullOrEmpty(catalogPattern))
-                        {
-                            catalogMap.Add(string.Empty, []);
-                        }
-                    }
-
-                    if (depth == GetObjectsDepth.All || depth >= GetObjectsDepth.DbSchemas)
-                    {
-                        TGetSchemasResp getSchemasResp = GetSchemasAsync(catalogPattern, dbSchemaPattern, cancellationToken).Result;
-
-                        TGetResultSetMetadataResp schemaMetadata = GetResultSetMetadataAsync(getSchemasResp, cancellationToken).Result;
-                        IReadOnlyDictionary<string, int> columnMap = GetColumnIndexMap(schemaMetadata.Schema.Columns);
-                        TRowSet rowSet = GetRowSetAsync(getSchemasResp, cancellationToken).Result;
-
-                        IReadOnlyList<string> catalogList = rowSet.Columns[columnMap[TableCatalog]].StringVal.Values;
-                        IReadOnlyList<string> schemaList = rowSet.Columns[columnMap[TableSchem]].StringVal.Values;
-
-                        for (int i = 0; i < catalogList.Count; i++)
-                        {
-                            string catalog = catalogList[i];
-                            string schemaDb = schemaList[i];
-                            // It seems Spark sometimes returns empty string for catalog on some schema (temporary tables).
-                            catalogMap.GetValueOrDefault(catalog)?.Add(schemaDb, new Dictionary<string, TableInfo>());
-                        }
-                    }
-
-                    if (depth == GetObjectsDepth.All || depth >= GetObjectsDepth.Tables)
-                    {
-                        TGetTablesResp getTablesResp = GetTablesAsync(
-                            catalogPattern,
-                            dbSchemaPattern,
-                            tableNamePattern,
-                            tableTypes?.ToList(),
-                            cancellationToken).Result;
-
-                        TGetResultSetMetadataResp tableMetadata = GetResultSetMetadataAsync(getTablesResp, cancellationToken).Result;
-                        IReadOnlyDictionary<string, int> columnMap = GetColumnIndexMap(tableMetadata.Schema.Columns);
-                        TRowSet rowSet = GetRowSetAsync(getTablesResp, cancellationToken).Result;
-
-                        IReadOnlyList<string> catalogList = rowSet.Columns[columnMap[TableCat]].StringVal.Values;
-                        IReadOnlyList<string> schemaList = rowSet.Columns[columnMap[TableSchem]].StringVal.Values;
-                        IReadOnlyList<string> tableList = rowSet.Columns[columnMap[TableName]].StringVal.Values;
-                        IReadOnlyList<string> tableTypeList = rowSet.Columns[columnMap[TableType]].StringVal.Values;
-
-                        for (int i = 0; i < catalogList.Count; i++)
-                        {
-                            string catalog = catalogList[i];
-                            string schemaDb = schemaList[i];
-                            string tableName = tableList[i];
-                            string tableType = tableTypeList[i];
-                            TableInfo tableInfo = new(tableType);
-                            catalogMap.GetValueOrDefault(catalog)?.GetValueOrDefault(schemaDb)?.Add(tableName, tableInfo);
-                        }
-                    }
-
-                    if (depth == GetObjectsDepth.All)
-                    {
-                        TGetColumnsResp columnsResponse = GetColumnsAsync(
-                            catalogPattern,
-                            dbSchemaPattern,
-                            tableNamePattern,
-                            columnNamePattern,
-                            cancellationToken).Result;
-
-                        TGetResultSetMetadataResp columnsMetadata = GetResultSetMetadataAsync(columnsResponse, cancellationToken).Result;
-                        IReadOnlyDictionary<string, int> columnMap = GetColumnIndexMap(columnsMetadata.Schema.Columns);
-                        TRowSet rowSet = GetRowSetAsync(columnsResponse, cancellationToken).Result;
-
-                        ColumnsMetadataColumnNames columnNames = GetColumnsMetadataColumnNames();
-                        IReadOnlyList<string> catalogList = rowSet.Columns[columnMap[columnNames.TableCatalog]].StringVal.Values;
-                        IReadOnlyList<string> schemaList = rowSet.Columns[columnMap[columnNames.TableSchema]].StringVal.Values;
-                        IReadOnlyList<string> tableList = rowSet.Columns[columnMap[columnNames.TableName]].StringVal.Values;
-                        IReadOnlyList<string> columnNameList = rowSet.Columns[columnMap[columnNames.ColumnName]].StringVal.Values;
-                        ReadOnlySpan<int> columnTypeList = rowSet.Columns[columnMap[columnNames.DataType]].I32Val.Values.Values;
-                        IReadOnlyList<string> typeNameList = rowSet.Columns[columnMap[columnNames.TypeName]].StringVal.Values;
-                        ReadOnlySpan<int> nullableList = rowSet.Columns[columnMap[columnNames.Nullable]].I32Val.Values.Values;
-                        IReadOnlyList<string> columnDefaultList = rowSet.Columns[columnMap[columnNames.ColumnDef]].StringVal.Values;
-                        ReadOnlySpan<int> ordinalPosList = rowSet.Columns[columnMap[columnNames.OrdinalPosition]].I32Val.Values.Values;
-                        IReadOnlyList<string> isNullableList = rowSet.Columns[columnMap[columnNames.IsNullable]].StringVal.Values;
-                        IReadOnlyList<string> isAutoIncrementList = rowSet.Columns[columnMap[columnNames.IsAutoIncrement]].StringVal.Values;
-                        ReadOnlySpan<int> columnSizeList = rowSet.Columns[columnMap[columnNames.ColumnSize]].I32Val.Values.Values;
-                        ReadOnlySpan<int> decimalDigitsList = rowSet.Columns[columnMap[columnNames.DecimalDigits]].I32Val.Values.Values;
-
-                        for (int i = 0; i < catalogList.Count; i++)
-                        {
-                            // For systems that don't support 'catalog' in the namespace
-                            string catalog = catalogList[i] ?? string.Empty;
-                            string schemaDb = schemaList[i];
-                            string tableName = tableList[i];
-                            string columnName = columnNameList[i];
-                            short colType = (short)columnTypeList[i];
-                            string typeName = typeNameList[i];
-                            short nullable = (short)nullableList[i];
-                            string? isAutoIncrementString = isAutoIncrementList[i];
-                            bool isAutoIncrement = !string.IsNullOrEmpty(isAutoIncrementString) && (isAutoIncrementString.Equals("YES", StringComparison.InvariantCultureIgnoreCase) || isAutoIncrementString.Equals("TRUE", StringComparison.InvariantCultureIgnoreCase));
-                            string isNullable = isNullableList[i] ?? "YES";
-                            string columnDefault = columnDefaultList[i] ?? "";
-                            // Spark/Databricks reports ordinal index zero-indexed, instead of one-indexed
-                            int ordinalPos = ordinalPosList[i] + PositionRequiredOffset;
-                            int columnSize = columnSizeList[i];
-                            int decimalDigits = decimalDigitsList[i];
-                            TableInfo? tableInfo = catalogMap.GetValueOrDefault(catalog)?.GetValueOrDefault(schemaDb)?.GetValueOrDefault(tableName);
-                            tableInfo?.ColumnName.Add(columnName);
-                            tableInfo?.ColType.Add(colType);
-                            tableInfo?.Nullable.Add(nullable);
-                            tableInfo?.IsAutoIncrement.Add(isAutoIncrement);
-                            tableInfo?.IsNullable.Add(isNullable);
-                            tableInfo?.ColumnDefault.Add(columnDefault);
-                            tableInfo?.OrdinalPosition.Add(ordinalPos);
-                            SetPrecisionScaleAndTypeName(colType, typeName, tableInfo, columnSize, decimalDigits);
-                        }
-                    }
-
-                    StringArray.Builder catalogNameBuilder = new StringArray.Builder();
-                    List<IArrowArray?> catalogDbSchemasValues = new List<IArrowArray?>();
-
-                    foreach (KeyValuePair<string, Dictionary<string, Dictionary<string, TableInfo>>> catalogEntry in catalogMap)
-                    {
-                        catalogNameBuilder.Append(catalogEntry.Key);
-
-                        if (depth == GetObjectsDepth.Catalogs)
-                        {
-                            catalogDbSchemasValues.Add(null);
-                        }
-                        else
-                        {
-                            catalogDbSchemasValues.Add(GetDbSchemas(
-                                        depth, catalogEntry.Value));
-                        }
-                    }
-
-                    Schema schema = StandardSchemas.GetObjectsSchema;
-                    IReadOnlyList<IArrowArray> dataArrays = schema.Validate(
-                        new List<IArrowArray>
-                        {
-                    catalogNameBuilder.Build(),
-                    catalogDbSchemasValues.BuildListArrayForType(new StructType(StandardSchemas.DbSchemaSchema)),
-                        });
-
-                    return new HiveInfoArrowStream(schema, dataArrays);
+                    return GetObjectsResultBuilder.BuildGetObjectsResultAsync(
+                        this, depth, catalogPattern, dbSchemaPattern,
+                        tableNamePattern, tableTypes, columnNamePattern,
+                        cancellationToken).GetAwaiter().GetResult();
                 }
                 catch (Exception ex) when (ExceptionHelper.IsOperationCanceledOrCancellationRequested(ex, cancellationToken))
                 {
@@ -696,6 +542,137 @@ namespace AdbcDrivers.HiveServer2.Hive2
                     throw new HiveServer2Exception($"An unexpected error occurred while running metadata query. '{ApacheUtility.FormatExceptionMessage(ex)}'", ex);
                 }
             }, ClassName + "." + nameof(GetObjects));
+        }
+
+        // IGetObjectsDataProvider implementation
+
+        async Task<IReadOnlyList<string>> IGetObjectsDataProvider.GetCatalogsAsync(string? catalogPattern, CancellationToken cancellationToken)
+        {
+            TGetCatalogsResp getCatalogsResp = await GetCatalogsAsync(cancellationToken).ConfigureAwait(false);
+
+            var catalogsMetadata = await GetResultSetMetadataAsync(getCatalogsResp, cancellationToken).ConfigureAwait(false);
+            IReadOnlyDictionary<string, int> columnMap = GetColumnIndexMap(catalogsMetadata.Schema.Columns);
+
+            string catalogRegexp = PatternToRegEx(catalogPattern);
+            TRowSet rowSet = await GetRowSetAsync(getCatalogsResp, cancellationToken).ConfigureAwait(false);
+            IReadOnlyList<string> list = rowSet.Columns[columnMap[TableCat]].StringVal.Values;
+
+            var result = new List<string>();
+            for (int i = 0; i < list.Count; i++)
+            {
+                string catalog = list[i];
+                if (Regex.IsMatch(catalog, catalogRegexp, RegexOptions.IgnoreCase))
+                {
+                    result.Add(catalog);
+                }
+            }
+            if (list.Count == 0 && string.IsNullOrEmpty(catalogPattern))
+            {
+                result.Add(string.Empty);
+            }
+            return result;
+        }
+
+        async Task<IReadOnlyList<(string catalog, string schema)>> IGetObjectsDataProvider.GetSchemasAsync(string? catalogPattern, string? schemaPattern, CancellationToken cancellationToken)
+        {
+            TGetSchemasResp getSchemasResp = await GetSchemasAsync(catalogPattern, schemaPattern, cancellationToken).ConfigureAwait(false);
+
+            TGetResultSetMetadataResp schemaMetadata = await GetResultSetMetadataAsync(getSchemasResp, cancellationToken).ConfigureAwait(false);
+            IReadOnlyDictionary<string, int> columnMap = GetColumnIndexMap(schemaMetadata.Schema.Columns);
+            TRowSet rowSet = await GetRowSetAsync(getSchemasResp, cancellationToken).ConfigureAwait(false);
+
+            IReadOnlyList<string> catalogList = rowSet.Columns[columnMap[TableCatalog]].StringVal.Values;
+            IReadOnlyList<string> schemaList = rowSet.Columns[columnMap[TableSchem]].StringVal.Values;
+
+            var result = new List<(string, string)>();
+            for (int i = 0; i < catalogList.Count; i++)
+            {
+                result.Add((catalogList[i], schemaList[i]));
+            }
+            return result;
+        }
+
+        async Task<IReadOnlyList<(string catalog, string schema, string table, string tableType)>> IGetObjectsDataProvider.GetTablesAsync(
+            string? catalogPattern, string? schemaPattern, string? tableNamePattern, IReadOnlyList<string>? tableTypes, CancellationToken cancellationToken)
+        {
+            TGetTablesResp getTablesResp = await GetTablesAsync(
+                catalogPattern, schemaPattern, tableNamePattern,
+                tableTypes?.ToList(), cancellationToken).ConfigureAwait(false);
+
+            TGetResultSetMetadataResp tableMetadata = await GetResultSetMetadataAsync(getTablesResp, cancellationToken).ConfigureAwait(false);
+            IReadOnlyDictionary<string, int> columnMap = GetColumnIndexMap(tableMetadata.Schema.Columns);
+            TRowSet rowSet = await GetRowSetAsync(getTablesResp, cancellationToken).ConfigureAwait(false);
+
+            IReadOnlyList<string> catalogList = rowSet.Columns[columnMap[TableCat]].StringVal.Values;
+            IReadOnlyList<string> schemaList = rowSet.Columns[columnMap[TableSchem]].StringVal.Values;
+            IReadOnlyList<string> tableList = rowSet.Columns[columnMap[TableName]].StringVal.Values;
+            IReadOnlyList<string> tableTypeList = rowSet.Columns[columnMap[TableType]].StringVal.Values;
+
+            var result = new List<(string, string, string, string)>();
+            for (int i = 0; i < catalogList.Count; i++)
+            {
+                result.Add((catalogList[i], schemaList[i], tableList[i], tableTypeList[i]));
+            }
+            return result;
+        }
+
+        /// <remarks>
+        /// Thrift: column metadata (precision, scale, type name) comes from the server via
+        /// SetPrecisionScaleAndTypeName. SEA: computed from type name strings via ColumnMetadataHelper.
+        /// </remarks>
+        async Task IGetObjectsDataProvider.PopulateColumnInfoAsync(string? catalogPattern, string? schemaPattern,
+            string? tablePattern, string? columnPattern,
+            Dictionary<string, Dictionary<string, Dictionary<string, TableInfo>>> catalogMap,
+            CancellationToken cancellationToken)
+        {
+            TGetColumnsResp columnsResponse = await GetColumnsAsync(
+                catalogPattern, schemaPattern, tablePattern, columnPattern, cancellationToken).ConfigureAwait(false);
+
+            TGetResultSetMetadataResp columnsMetadata = await GetResultSetMetadataAsync(columnsResponse, cancellationToken).ConfigureAwait(false);
+            IReadOnlyDictionary<string, int> columnMap = GetColumnIndexMap(columnsMetadata.Schema.Columns);
+            TRowSet rowSet = await GetRowSetAsync(columnsResponse, cancellationToken).ConfigureAwait(false);
+
+            ColumnsMetadataColumnNames columnNames = GetColumnsMetadataColumnNames();
+            IReadOnlyList<string> catalogList = rowSet.Columns[columnMap[columnNames.TableCatalog]].StringVal.Values;
+            IReadOnlyList<string> schemaList = rowSet.Columns[columnMap[columnNames.TableSchema]].StringVal.Values;
+            IReadOnlyList<string> tableList = rowSet.Columns[columnMap[columnNames.TableName]].StringVal.Values;
+            IReadOnlyList<string> columnNameList = rowSet.Columns[columnMap[columnNames.ColumnName]].StringVal.Values;
+            ReadOnlySpan<int> columnTypeList = rowSet.Columns[columnMap[columnNames.DataType]].I32Val.Values.Values;
+            IReadOnlyList<string> typeNameList = rowSet.Columns[columnMap[columnNames.TypeName]].StringVal.Values;
+            ReadOnlySpan<int> nullableList = rowSet.Columns[columnMap[columnNames.Nullable]].I32Val.Values.Values;
+            IReadOnlyList<string> columnDefaultList = rowSet.Columns[columnMap[columnNames.ColumnDef]].StringVal.Values;
+            ReadOnlySpan<int> ordinalPosList = rowSet.Columns[columnMap[columnNames.OrdinalPosition]].I32Val.Values.Values;
+            IReadOnlyList<string> isNullableList = rowSet.Columns[columnMap[columnNames.IsNullable]].StringVal.Values;
+            IReadOnlyList<string> isAutoIncrementList = rowSet.Columns[columnMap[columnNames.IsAutoIncrement]].StringVal.Values;
+            ReadOnlySpan<int> columnSizeList = rowSet.Columns[columnMap[columnNames.ColumnSize]].I32Val.Values.Values;
+            ReadOnlySpan<int> decimalDigitsList = rowSet.Columns[columnMap[columnNames.DecimalDigits]].I32Val.Values.Values;
+
+            for (int i = 0; i < catalogList.Count; i++)
+            {
+                string catalog = catalogList[i] ?? string.Empty;
+                string schemaDb = schemaList[i];
+                string tableName = tableList[i];
+                string columnName = columnNameList[i];
+                short colType = (short)columnTypeList[i];
+                string typeName = typeNameList[i];
+                short nullable = (short)nullableList[i];
+                string? isAutoIncrementString = isAutoIncrementList[i];
+                bool isAutoIncrement = !string.IsNullOrEmpty(isAutoIncrementString) && (isAutoIncrementString.Equals("YES", StringComparison.InvariantCultureIgnoreCase) || isAutoIncrementString.Equals("TRUE", StringComparison.InvariantCultureIgnoreCase));
+                string isNullable = isNullableList[i] ?? "YES";
+                string columnDefault = columnDefaultList[i] ?? "";
+                int ordinalPos = ordinalPosList[i] + PositionRequiredOffset;
+                int columnSize = columnSizeList[i];
+                int decimalDigits = decimalDigitsList[i];
+                TableInfo? tableInfo = catalogMap.GetValueOrDefault(catalog)?.GetValueOrDefault(schemaDb)?.GetValueOrDefault(tableName);
+                tableInfo?.ColumnName.Add(columnName);
+                tableInfo?.ColType.Add(colType);
+                tableInfo?.Nullable.Add(nullable);
+                tableInfo?.IsAutoIncrement.Add(isAutoIncrement);
+                tableInfo?.IsNullable.Add(isNullable);
+                tableInfo?.ColumnDefault.Add(columnDefault);
+                tableInfo?.OrdinalPosition.Add(ordinalPos);
+                SetPrecisionScaleAndTypeName(colType, typeName, tableInfo, columnSize, decimalDigits);
+            }
         }
 
         public override IArrowArrayStream GetTableTypes()
@@ -977,93 +954,6 @@ namespace AdbcDrivers.HiveServer2.Hive2
             return builder.ToString();
         }
 
-        private static StructArray GetDbSchemas(
-            GetObjectsDepth depth,
-            Dictionary<string, Dictionary<string, TableInfo>> schemaMap)
-        {
-            StringArray.Builder dbSchemaNameBuilder = new StringArray.Builder();
-            List<IArrowArray?> dbSchemaTablesValues = new List<IArrowArray?>();
-            ArrowBuffer.BitmapBuilder nullBitmapBuffer = new ArrowBuffer.BitmapBuilder();
-            int length = 0;
-
-            foreach (KeyValuePair<string, Dictionary<string, TableInfo>> schemaEntry in schemaMap)
-            {
-                dbSchemaNameBuilder.Append(schemaEntry.Key);
-                length++;
-                nullBitmapBuffer.Append(true);
-
-                if (depth == GetObjectsDepth.DbSchemas)
-                {
-                    dbSchemaTablesValues.Add(null);
-                }
-                else
-                {
-                    dbSchemaTablesValues.Add(GetTableSchemas(
-                        depth, schemaEntry.Value));
-                }
-            }
-
-            IReadOnlyList<Field> schema = StandardSchemas.DbSchemaSchema;
-            IReadOnlyList<IArrowArray> dataArrays = schema.Validate(
-                new List<IArrowArray>
-                {
-                    dbSchemaNameBuilder.Build(),
-                    dbSchemaTablesValues.BuildListArrayForType(new StructType(StandardSchemas.TableSchema)),
-                });
-
-            return new StructArray(
-                new StructType(schema),
-                length,
-                dataArrays,
-                nullBitmapBuffer.Build());
-        }
-
-        private static StructArray GetTableSchemas(
-            GetObjectsDepth depth,
-            Dictionary<string, TableInfo> tableMap)
-        {
-            StringArray.Builder tableNameBuilder = new StringArray.Builder();
-            StringArray.Builder tableTypeBuilder = new StringArray.Builder();
-            List<IArrowArray?> tableColumnsValues = new List<IArrowArray?>();
-            List<IArrowArray?> tableConstraintsValues = new List<IArrowArray?>();
-            ArrowBuffer.BitmapBuilder nullBitmapBuffer = new ArrowBuffer.BitmapBuilder();
-            int length = 0;
-
-            foreach (KeyValuePair<string, TableInfo> tableEntry in tableMap)
-            {
-                tableNameBuilder.Append(tableEntry.Key);
-                tableTypeBuilder.Append(tableEntry.Value.Type);
-                nullBitmapBuffer.Append(true);
-                length++;
-
-                tableConstraintsValues.Add(null);
-
-                if (depth == GetObjectsDepth.Tables)
-                {
-                    tableColumnsValues.Add(null);
-                }
-                else
-                {
-                    tableColumnsValues.Add(GetColumnSchema(tableEntry.Value));
-                }
-            }
-
-            IReadOnlyList<Field> schema = StandardSchemas.TableSchema;
-            IReadOnlyList<IArrowArray> dataArrays = schema.Validate(
-                new List<IArrowArray>
-                {
-                    tableNameBuilder.Build(),
-                    tableTypeBuilder.Build(),
-                    tableColumnsValues.BuildListArrayForType(new StructType(StandardSchemas.ColumnSchema)),
-                    tableConstraintsValues.BuildListArrayForType( new StructType(StandardSchemas.ConstraintSchema))
-                });
-
-            return new StructArray(
-                new StructType(schema),
-                length,
-                dataArrays,
-                nullBitmapBuffer.Build());
-        }
 
         internal async Task<TGetCatalogsResp> GetCatalogsAsync(CancellationToken cancellationToken)
         {
@@ -1278,90 +1168,6 @@ namespace AdbcDrivers.HiveServer2.Hive2
             }, ClassName + "." + nameof(GetCrossReferenceAsync));
         }
 
-        private static StructArray GetColumnSchema(TableInfo tableInfo)
-        {
-            StringArray.Builder columnNameBuilder = new StringArray.Builder();
-            Int32Array.Builder ordinalPositionBuilder = new Int32Array.Builder();
-            StringArray.Builder remarksBuilder = new StringArray.Builder();
-            Int16Array.Builder xdbcDataTypeBuilder = new Int16Array.Builder();
-            StringArray.Builder xdbcTypeNameBuilder = new StringArray.Builder();
-            Int32Array.Builder xdbcColumnSizeBuilder = new Int32Array.Builder();
-            Int16Array.Builder xdbcDecimalDigitsBuilder = new Int16Array.Builder();
-            Int16Array.Builder xdbcNumPrecRadixBuilder = new Int16Array.Builder();
-            Int16Array.Builder xdbcNullableBuilder = new Int16Array.Builder();
-            StringArray.Builder xdbcColumnDefBuilder = new StringArray.Builder();
-            Int16Array.Builder xdbcSqlDataTypeBuilder = new Int16Array.Builder();
-            Int16Array.Builder xdbcDatetimeSubBuilder = new Int16Array.Builder();
-            Int32Array.Builder xdbcCharOctetLengthBuilder = new Int32Array.Builder();
-            StringArray.Builder xdbcIsNullableBuilder = new StringArray.Builder();
-            StringArray.Builder xdbcScopeCatalogBuilder = new StringArray.Builder();
-            StringArray.Builder xdbcScopeSchemaBuilder = new StringArray.Builder();
-            StringArray.Builder xdbcScopeTableBuilder = new StringArray.Builder();
-            BooleanArray.Builder xdbcIsAutoincrementBuilder = new BooleanArray.Builder();
-            BooleanArray.Builder xdbcIsGeneratedcolumnBuilder = new BooleanArray.Builder();
-            ArrowBuffer.BitmapBuilder nullBitmapBuffer = new ArrowBuffer.BitmapBuilder();
-            int length = 0;
-
-
-            for (int i = 0; i < tableInfo.ColumnName.Count; i++)
-            {
-                columnNameBuilder.Append(tableInfo.ColumnName[i]);
-                ordinalPositionBuilder.Append(tableInfo.OrdinalPosition[i]);
-                // Use the "remarks" field to store the original type name value
-                remarksBuilder.Append(tableInfo.TypeName[i]);
-                xdbcColumnSizeBuilder.Append(tableInfo.Precision[i]);
-                xdbcDecimalDigitsBuilder.Append(tableInfo.Scale[i]);
-                xdbcDataTypeBuilder.Append(tableInfo.ColType[i]);
-                // Just the base type name without precision or scale clause
-                xdbcTypeNameBuilder.Append(tableInfo.BaseTypeName[i]);
-                xdbcNumPrecRadixBuilder.AppendNull();
-                xdbcNullableBuilder.Append(tableInfo.Nullable[i]);
-                xdbcColumnDefBuilder.Append(tableInfo.ColumnDefault[i]);
-                xdbcSqlDataTypeBuilder.Append(tableInfo.ColType[i]);
-                xdbcDatetimeSubBuilder.AppendNull();
-                xdbcCharOctetLengthBuilder.AppendNull();
-                xdbcIsNullableBuilder.Append(tableInfo.IsNullable[i]);
-                xdbcScopeCatalogBuilder.AppendNull();
-                xdbcScopeSchemaBuilder.AppendNull();
-                xdbcScopeTableBuilder.AppendNull();
-                xdbcIsAutoincrementBuilder.Append(tableInfo.IsAutoIncrement[i]);
-                xdbcIsGeneratedcolumnBuilder.Append(true);
-                nullBitmapBuffer.Append(true);
-                length++;
-            }
-
-            IReadOnlyList<Field> schema = StandardSchemas.ColumnSchema;
-            IReadOnlyList<IArrowArray> dataArrays = schema.Validate(
-                new List<IArrowArray>
-                {
-                    columnNameBuilder.Build(),
-                    ordinalPositionBuilder.Build(),
-                    remarksBuilder.Build(),
-                    xdbcDataTypeBuilder.Build(),
-                    xdbcTypeNameBuilder.Build(),
-                    xdbcColumnSizeBuilder.Build(),
-                    xdbcDecimalDigitsBuilder.Build(),
-                    xdbcNumPrecRadixBuilder.Build(),
-                    xdbcNullableBuilder.Build(),
-                    xdbcColumnDefBuilder.Build(),
-                    xdbcSqlDataTypeBuilder.Build(),
-                    xdbcDatetimeSubBuilder.Build(),
-                    xdbcCharOctetLengthBuilder.Build(),
-                    xdbcIsNullableBuilder.Build(),
-                    xdbcScopeCatalogBuilder.Build(),
-                    xdbcScopeSchemaBuilder.Build(),
-                    xdbcScopeTableBuilder.Build(),
-                    xdbcIsAutoincrementBuilder.Build(),
-                    xdbcIsGeneratedcolumnBuilder.Build()
-                });
-
-            return new StructArray(
-                new StructType(schema),
-                length,
-                dataArrays,
-                nullBitmapBuffer.Build());
-        }
-
         internal abstract void SetPrecisionScaleAndTypeName(short columnType, string typeName, TableInfo? tableInfo, int columnSize, int decimalDigits);
 
         public override Schema GetTableSchema(string? catalog, string? dbSchema, string? tableName)
@@ -1416,7 +1222,13 @@ namespace AdbcDrivers.HiveServer2.Hive2
             }, ClassName + "." + nameof(GetTableSchema));
         }
 
-        private static IArrowType GetArrowType(int columnTypeId, string typeName, bool isColumnSizeValid, int? columnSize, int? decimalDigits)
+        /// <summary>
+        /// Converts a column type ID to an Apache Arrow type.
+        /// For DECIMAL types, uses server-provided precision/scale when available,
+        /// otherwise parses from the type name string.
+        /// </summary>
+        /// <exception cref="NotImplementedException">Thrown for unsupported column type IDs.</exception>
+        internal static IArrowType GetArrowType(int columnTypeId, string typeName, bool isColumnSizeValid, int? columnSize, int? decimalDigits)
         {
             switch (columnTypeId)
             {
@@ -1652,60 +1464,6 @@ namespace AdbcDrivers.HiveServer2.Hive2
 
                 return new HiveInfoArrowStream(StandardSchemas.GetInfoSchema, dataArrays);
             }, ClassName + "." + nameof(GetInfo));
-        }
-
-        internal struct TableInfo(string type)
-        {
-            public string Type { get; } = type;
-
-            public List<string> ColumnName { get; } = new();
-
-            public List<short> ColType { get; } = new();
-
-            public List<string> BaseTypeName { get; } = new();
-
-            public List<string> TypeName { get; } = new();
-
-            public List<short> Nullable { get; } = new();
-
-            public List<int?> Precision { get; } = new();
-
-            public List<short?> Scale { get; } = new();
-
-            public List<int> OrdinalPosition { get; } = new();
-
-            public List<string> ColumnDefault { get; } = new();
-
-            public List<string> IsNullable { get; } = new();
-
-            public List<bool> IsAutoIncrement { get; } = new();
-        }
-
-        internal class HiveInfoArrowStream : IArrowArrayStream
-        {
-            private Schema schema;
-            private RecordBatch? batch;
-
-            public HiveInfoArrowStream(Schema schema, IReadOnlyList<IArrowArray> data)
-            {
-                this.schema = schema;
-                this.batch = new RecordBatch(schema, data, data[0].Length);
-            }
-
-            public Schema Schema { get { return this.schema; } }
-
-            public ValueTask<RecordBatch?> ReadNextRecordBatchAsync(CancellationToken cancellationToken = default)
-            {
-                RecordBatch? batch = this.batch;
-                this.batch = null;
-                return new ValueTask<RecordBatch?>(batch);
-            }
-
-            public void Dispose()
-            {
-                this.batch?.Dispose();
-                this.batch = null;
-            }
         }
 
         private static class ExceptionHelper

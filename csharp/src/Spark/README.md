@@ -62,8 +62,11 @@ but can also be passed in the call to `AdbcDatabase.Connect`.
 | `adbc.http_options.tls.disable_server_certificate_validation` | If tls/ssl server certificate validation needs to enabled or not. One of `True`, `False`. If set to True, all certificate validation errors are ignored | `False` |
 | `adbc.http_options.tls.allow_self_signed` | If self signed tls/ssl certificate needs to be allowed or not. One of `True`, `False` | `False` |
 | `adbc.http_options.tls.allow_hostname_mismatch` | If hostname mismatch is allowed for ssl. One of `True`, `False` | `False` |
-| `adbc.http_options.tls.trusted_certificate_path` | The full path of the tls/ssl certificate .pem file containing custom CA certificates for verifying the server when connecting over TLS | `` |
+| `adbc.http_options.tls.trusted_certificate_path` | The full path of the tls/ssl certificate .pem file containing custom CA certificates for verifying the server when connecting over TLS | |
 | `adbc.telemetry.trace_parent` | The [trace parent](https://www.w3.org/TR/trace-context/#traceparent-header) identifier for an existing [trace context](https://www.w3.org/TR/trace-context/) \(span/activity\) in a tracing system. This option is most likely to be set using `Statement.SetOption` to set the trace parent for driver interaction with a specific `Statement`. However, it can also be set using `Driver.Open`, `Database.Connect` or `Connection.SetOption` to set the trace parent for all interactions with the driver on that specific `Connection`. |  |
+| `adbc.traces.exporter.adbcfile.location` | The location where ADBC file traces will be stored. | See [Tracing Support](#tracing-support) for `adbcfile` |
+| `adbc.traces.exporter.adbcfile.maxtracesizekb` | The maximum size of a single ADBC file trace in kilobytes. | `1024` |
+| `adbc.traces.exporter.adbcfile.maxtracefiles` | The maximum number of ADBC file traces to retain. | `999` |
 
 ## Timeout Configuration
 

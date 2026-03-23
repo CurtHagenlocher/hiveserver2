@@ -48,7 +48,8 @@ namespace AdbcDrivers.Tests.HiveServer2.Common
         {
             Environment.SetEnvironmentVariable(ListenersOptions.Environment.Exporter, exporterName);
 
-            DirectoryInfo directoryInfo = GetTracesDirectoryInfo();
+            string tracesLocationSubfolder = Guid.NewGuid().ToString("N");
+            DirectoryInfo directoryInfo = GetTracesDirectoryInfo(tracesLocationSubfolder);
             ResetTraceDirectory(directoryInfo);
 
             directoryInfo.Refresh();
@@ -59,6 +60,7 @@ namespace AdbcDrivers.Tests.HiveServer2.Common
             try
             {
                 Dictionary<string, string> parameters = GetDriverParameters(TestConfiguration);
+                parameters[ListenersOptions.AdbcFile.Location] = directoryInfo.FullName;
                 using (AdbcDatabase database = NewDriver.Open(parameters))
                 {
                     using (AdbcConnection connection = database.Connect(new Dictionary<string, string>()))
@@ -102,10 +104,11 @@ namespace AdbcDrivers.Tests.HiveServer2.Common
             }
         }
 
-        private static DirectoryInfo GetTracesDirectoryInfo() =>
+        private static DirectoryInfo GetTracesDirectoryInfo(string tracesLocationFolder) =>
             new DirectoryInfo(Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "Apache.Arrow.Adbc",
-                "Traces"));
+                "Traces",
+                tracesLocationFolder));
     }
 }

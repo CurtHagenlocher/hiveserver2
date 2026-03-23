@@ -72,6 +72,9 @@ but can also be passed in the call to `AdbcDatabase.Connect`.
 | `adbc.proxy_options.proxy_pwd` | Password for proxy authentication. Only feature-complete in Spark driver. Required when proxy_auth is True | |
 | `adbc.telemetry.trace_parent` | The [trace parent](https://www.w3.org/TR/trace-context/#traceparent-header) identifier for an existing [trace context](https://www.w3.org/TR/trace-context/) \(span/activity\) in a tracing system. This option is most likely to be set using `Statement.SetOption` to set the trace parent for driver interaction with a specific `Statement`. However, it can also be set using `Driver.Open`, `Database.Connect` or `Connection.SetOption` to set the trace parent for all interactions with the driver on that specific `Connection`. |  |
 | `adbc.apache.statement.batch_size_stop_condition` | Flag to enable/disable stopping reading based on batch size condition | `False` |
+| `adbc.traces.exporter.adbcfile.location` | The location where ADBC file traces will be stored. | See [Tracing Support](#tracing-support) for `adbcfile` |
+| `adbc.traces.exporter.adbcfile.maxtracesizekb` | The maximum size of a single ADBC file trace in kilobytes. | `1024` |
+| `adbc.traces.exporter.adbcfile.maxtracefiles` | The maximum number of ADBC file traces to retain. | `999` |
 
 ## Timeout Configuration
 

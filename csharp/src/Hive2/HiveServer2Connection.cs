@@ -62,7 +62,7 @@ namespace AdbcDrivers.HiveServer2.Hive2
         private TCLIService.IAsync? _client;
         private readonly Lazy<string> _vendorVersion;
         private readonly Lazy<string> _vendorName;
-        private bool _isDisposed;
+        private int _isDisposed;
         // Note: this needs to be set before the constructor runs
         private readonly string _traceInstanceId = Guid.NewGuid().ToString("N");
         private readonly FileActivityListener? _fileActivityListener;
@@ -798,11 +798,10 @@ namespace AdbcDrivers.HiveServer2.Hive2
 
         protected override void Dispose(bool disposing)
         {
-            if (!_isDisposed && disposing)
+            if (disposing && Interlocked.CompareExchange(ref _isDisposed, 1, 0) == 0)
             {
                 DisposeClient();
                 _fileActivityListener?.Dispose();
-                _isDisposed = true;
             }
             base.Dispose(disposing);
         }

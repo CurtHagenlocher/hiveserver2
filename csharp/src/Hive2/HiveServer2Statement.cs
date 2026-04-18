@@ -92,7 +92,7 @@ namespace AdbcDrivers.HiveServer2.Hive2
             CancellationTokenSource ts = SetTokenSource();
             try
             {
-                return ExecuteQueryAsyncInternal(ts.Token).Result;
+                return ExecuteQueryAsyncInternal(ts.Token).ConfigureAwait(false).GetAwaiter().GetResult();
             }
             catch (Exception ex) when (IsCancellation(ex, ts.Token))
             {
@@ -113,7 +113,7 @@ namespace AdbcDrivers.HiveServer2.Hive2
             CancellationTokenSource ts = SetTokenSource();
             try
             {
-                return ExecuteUpdateAsyncInternal(ts.Token).Result;
+                return ExecuteUpdateAsyncInternal(ts.Token).ConfigureAwait(false).GetAwaiter().GetResult();
             }
             catch (Exception ex) when (IsCancellation(ex, ts.Token))
             {
@@ -953,7 +953,7 @@ namespace AdbcDrivers.HiveServer2.Hive2
             // STEP 4: Build Arrow arrays for each relationship field
             foreach (var fieldName in includeFields)
             {
-                var fieldData = relationData.ContainsKey(fieldName) ? relationData[fieldName] : null;
+                relationData.TryGetValue(fieldName, out var fieldData);
                 IArrowType arrowType = StringType.Default;
                 if (result.Stream != null)
                 {

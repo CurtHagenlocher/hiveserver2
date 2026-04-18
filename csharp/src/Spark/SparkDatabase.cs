@@ -45,7 +45,7 @@ namespace AdbcDrivers.HiveServer2.Spark
                     .Concat(properties.Where(x => !options.Keys.Contains(x.Key, StringComparer.OrdinalIgnoreCase)))
                     .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
             SparkConnection connection = SparkConnectionFactory.NewConnection(mergedProperties); // new SparkConnection(mergedProperties);
-            connection.OpenAsync().Wait();
+            connection.OpenAsync().ConfigureAwait(false).GetAwaiter().GetResult();
             return connection;
         }
     }

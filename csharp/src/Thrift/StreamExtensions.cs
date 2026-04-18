@@ -31,67 +31,6 @@ namespace AdbcDrivers.HiveServer2.Thrift
 {
     internal static class StreamExtensions
     {
-        public static void WriteInt32LittleEndian(int value, Span<byte> buffer, int offset)
-        {
-            if (offset < 0 || offset > buffer.Length - sizeof(int))
-                throw new ArgumentOutOfRangeException(nameof(offset), "Offset is outside the bounds of the buffer.");
-
-            // Ensure the buffer is large enough to hold an int starting from the offset
-            if (buffer.Length < offset + sizeof(int))
-                throw new ArgumentException("Buffer too small to write an Int32 at the specified offset.");
-
-            // Write the integer in little-endian format
-            buffer[offset] = (byte)value;
-            buffer[offset + 1] = (byte)(value >> 8);
-            buffer[offset + 2] = (byte)(value >> 16);
-            buffer[offset + 3] = (byte)(value >> 24);
-        }
-
-        public static void ReverseEndianI64AtOffset(Span<byte> buffer, int offset)
-        {
-            // Check if the buffer is large enough to contain an i64 at the given offset
-            if (offset < 0 || buffer.Length < offset + sizeof(long))
-                throw new ArgumentOutOfRangeException(nameof(offset), "Buffer is too small or offset is out of bounds.");
-
-            // Swap the bytes to reverse the endianness of the i64
-            byte temp;
-            for (int startIndex = offset, endIndex = offset + (sizeof(long) - 1); startIndex < endIndex; startIndex++, endIndex--)
-            {
-                temp = buffer[startIndex];
-                buffer[startIndex] = buffer[endIndex];
-                buffer[endIndex] = temp;
-            }
-        }
-
-        public static void ReverseEndianI32AtOffset(Span<byte> buffer, int offset)
-        {
-            // Check if the buffer is large enough to contain an i32 at the given offset
-            if (offset < 0 || buffer.Length < offset + sizeof(int))
-                throw new ArgumentException("Buffer is too small or offset is out of bounds.");
-
-            // Swap the bytes to reverse the endianness of the i32
-            // buffer[offset] and buffer[offset + 3]
-            // buffer[offset + 1] and buffer[offset + 2]
-            byte temp;
-
-            temp = buffer[offset];
-            buffer[offset] = buffer[offset + 3];
-            buffer[offset + 3] = temp;
-
-            temp = buffer[offset + 1];
-            buffer[offset + 1] = buffer[offset + 2];
-            buffer[offset + 2] = temp;
-        }
-
-        public static void ReverseEndiannessInt16(Span<byte> buffer, int offset)
-        {
-            if (offset < 0 || offset > buffer.Length - sizeof(short))
-                throw new ArgumentOutOfRangeException(nameof(offset), "Offset is outside the bounds of the buffer.");
-
-            // Swap the bytes to reverse the endianness of a 16-bit integer
-            (buffer[offset], buffer[offset + 1]) = (buffer[offset + 1], buffer[offset]);
-        }
-
         public static TValue? GetValueOrDefault<TKey, TValue>(this IReadOnlyDictionary<TKey, TValue> dictionary, TKey key, TValue? defaultValue = default)
         {
             if (dictionary == null) throw new ArgumentNullException(nameof(dictionary));

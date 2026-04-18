@@ -27,6 +27,7 @@
  * </auto-generated>
  */
 using System;
+using System.Buffers.Binary;
 using System.IO;
 using System.Text;
 using System.Threading;
@@ -104,7 +105,7 @@ namespace Apache.Hive.Service.Rpc.Thrift
 
                   for(int _i197 = 0; _i197 < length; ++_i197)
                   {
-                    StreamExtensions.WriteInt32LittleEndian(offset, memory.Span, _i197 * sizeof(int));
+                    BinaryPrimitives.WriteInt32LittleEndian(memory.Span.Slice(_i197 * sizeof(int)), offset);
                     var size = await iprot.ReadI32Async(cancellationToken);
                     offset += size;
 
@@ -123,7 +124,7 @@ namespace Apache.Hive.Service.Rpc.Thrift
                     await iprot.Transport.ReadExactlyAsync(tmp.AsMemory(0, size), cancellationToken);
                     values.Append(tmp.AsMemory(0, size).Span);
                   }
-                  StreamExtensions.WriteInt32LittleEndian(offset, memory.Span, length * sizeof(int));
+                  BinaryPrimitives.WriteInt32LittleEndian(memory.Span.Slice(length * sizeof(int)), offset);
 
                   await iprot.ReadListEndAsync(cancellationToken);
                 }

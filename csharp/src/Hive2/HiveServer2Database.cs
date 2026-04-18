@@ -45,7 +45,7 @@ namespace AdbcDrivers.HiveServer2.Hive2
                     .Concat(properties.Where(x => !options.Keys.Contains(x.Key, StringComparer.OrdinalIgnoreCase)))
                     .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
             HiveServer2Connection connection = HiveServer2ConnectionFactory.NewConnection(mergedProperties);
-            connection.OpenAsync().Wait();
+            connection.OpenAsync().GetAwaiter().GetResult();
             return connection;
         }
     }

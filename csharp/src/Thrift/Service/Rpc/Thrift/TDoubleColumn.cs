@@ -30,6 +30,7 @@ using System;
 using System.Buffers.Binary;
 using System.IO;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using AdbcDrivers.HiveServer2.Thrift;
@@ -98,9 +99,10 @@ namespace Apache.Hive.Service.Rpc.Thrift
                   var memory = buffer.AsMemory();
                   iprot.Transport.CheckReadBytesAvailable(buffer.Length);
                   await iprot.Transport.ReadExactlyAsync(memory, cancellationToken);
-                  for (int _i179 = 0; _i179 < length; ++_i179)
+                  var longs = MemoryMarshal.Cast<byte, long>(memory.Span);
+                  for (int _i179 = 0; _i179 < longs.Length; ++_i179)
                   {
-                    StreamExtensions.ReverseEndianI64AtOffset(memory.Span, _i179 * sizeof(double));
+                    longs[_i179] = BinaryPrimitives.ReverseEndianness(longs[_i179]);
                   }
                   await iprot.ReadListEndAsync(cancellationToken);
                 }

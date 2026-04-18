@@ -204,7 +204,7 @@ namespace AdbcDrivers.HiveServer2.Hive2
 
         protected override async Task<TProtocol> CreateProtocolAsync(TTransport transport, CancellationToken cancellationToken = default)
         {
-            if (!transport.IsOpen) await transport.OpenAsync(cancellationToken);
+            if (!transport.IsOpen) await transport.OpenAsync(cancellationToken).ConfigureAwait(false);
             return new TBinaryProtocol(transport);
         }
 

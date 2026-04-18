@@ -380,14 +380,14 @@ namespace AdbcDrivers.HiveServer2.Hive2
                 try
                 {
                     TTransport transport = CreateTransport();
-                    TProtocol protocol = await CreateProtocolAsync(transport, cancellationToken);
+                    TProtocol protocol = await CreateProtocolAsync(transport, cancellationToken).ConfigureAwait(false);
                     _transport = protocol.Transport;
                     _client = CreateTCLIServiceClient(protocol);
                     TOpenSessionReq request = CreateSessionRequest();
                     TOpenSessionResp? session = null;
                     try
                     {
-                        session = await Client.OpenSession(request, cancellationToken);
+                        session = await Client.OpenSession(request, cancellationToken).ConfigureAwait(false);
                     }
                     catch (TTransportException transportEx)
                         when (ApacheUtility.ContainsException(transportEx, out HttpRequestException? httpEx) && IsUnauthorized(httpEx!))
@@ -398,14 +398,14 @@ namespace AdbcDrivers.HiveServer2.Hive2
                     {
                         if (FallbackProtocolVersions.Any())
                         {
-                            session = await TryOpenSessionWithFallbackAsync(request, cancellationToken);
+                            session = await TryOpenSessionWithFallbackAsync(request, cancellationToken).ConfigureAwait(false);
                         }
                         else
                         {
                             throw;
                         }
                     }
-                    await HandleOpenSessionResponse(session, activity);
+                    await HandleOpenSessionResponse(session, activity).ConfigureAwait(false);
                 }
                 catch (Exception ex) when (ExceptionHelper.IsOperationCanceledOrCancellationRequested(ex, cancellationToken))
                 {
@@ -416,7 +416,7 @@ namespace AdbcDrivers.HiveServer2.Hive2
                     // Handle other exceptions if necessary
                     throw new HiveServer2Exception($"An unexpected error occurred while opening the session. '{ApacheUtility.FormatExceptionMessage(ex)}'", ex);
                 }
-            }, ClassName + "." + nameof(OpenAsync));
+            }, ClassName + "." + nameof(OpenAsync)).ConfigureAwait(false);
         }
 
         private static bool IsUnauthorized(HttpRequestException httpEx)
@@ -439,14 +439,14 @@ namespace AdbcDrivers.HiveServer2.Hive2
                     ResetConnection();
                     // Recreate transport + client
                     var retryTransport = CreateTransport();
-                    var retryProtocol = await CreateProtocolAsync(retryTransport, cancellationToken);
+                    var retryProtocol = await CreateProtocolAsync(retryTransport, cancellationToken).ConfigureAwait(false);
                     _transport = retryProtocol.Transport;
                     _client = CreateTCLIServiceClient(retryProtocol);
                     // New request with fallback version
                     var retryReq = CreateSessionRequest();
                     retryReq.Client_protocol = fallbackVersion;
 
-                    return await Client.OpenSession(retryReq, cancellationToken);
+                    return await Client.OpenSession(retryReq, cancellationToken).ConfigureAwait(false);
                 }
                 catch (Exception ex) when (ExceptionHelper.IsOperationCanceledOrCancellationRequested(ex, cancellationToken))
                 {
@@ -528,7 +528,7 @@ namespace AdbcDrivers.HiveServer2.Hive2
 
         public override IArrowArrayStream GetObjects(GetObjectsDepth depth, string? catalogPattern, string? dbSchemaPattern, string? tableNamePattern, IReadOnlyList<string>? tableTypes, string? columnNamePattern)
         {
-            return this.TraceActivity(_ =>
+            var result = this.TraceActivityAsync(async _ =>
             {
                 if (SessionHandle == null)
                 {
@@ -546,10 +546,10 @@ namespace AdbcDrivers.HiveServer2.Hive2
                         columnNamePattern = columnNamePattern?.ToLower();
                     }
 
-                    return GetObjectsResultBuilder.BuildGetObjectsResultAsync(
+                    return await GetObjectsResultBuilder.BuildGetObjectsResultAsync(
                         this, depth, catalogPattern, dbSchemaPattern,
                         tableNamePattern, tableTypes, columnNamePattern,
-                        cancellationToken).GetAwaiter().GetResult();
+                        cancellationToken).ConfigureAwait(false);
                 }
                 catch (Exception ex) when (ExceptionHelper.IsOperationCanceledOrCancellationRequested(ex, cancellationToken))
                 {
@@ -559,7 +559,8 @@ namespace AdbcDrivers.HiveServer2.Hive2
                 {
                     throw new HiveServer2Exception($"An unexpected error occurred while running metadata query. '{ApacheUtility.FormatExceptionMessage(ex)}'", ex);
                 }
-            }, ClassName + "." + nameof(GetObjects));
+            }, ClassName + "." + nameof(GetObjects)).ConfigureAwait(false);
+            return result.GetAwaiter().GetResult();
         }
 
         // IGetObjectsDataProvider implementation
@@ -695,7 +696,7 @@ namespace AdbcDrivers.HiveServer2.Hive2
 
         public override IArrowArrayStream GetTableTypes()
         {
-            return this.TraceActivity(activity =>
+            var result = this.TraceActivityAsync(async activity =>
             {
                 TGetTableTypesReq req = new()
                 {
@@ -706,10 +707,10 @@ namespace AdbcDrivers.HiveServer2.Hive2
                 CancellationToken cancellationToken = ApacheUtility.GetCancellationToken(QueryTimeoutSeconds, ApacheUtility.TimeUnit.Seconds);
                 try
                 {
-                    TGetTableTypesResp resp = Client.GetTableTypes(req, cancellationToken).Result;
+                    TGetTableTypesResp resp = await Client.GetTableTypes(req, cancellationToken).ConfigureAwait(false);
                     HandleThriftResponse(resp.Status, activity);
 
-                    TRowSet rowSet = GetRowSetAsync(resp, cancellationToken).Result;
+                    TRowSet rowSet = await GetRowSetAsync(resp, cancellationToken).ConfigureAwait(false);
                     StringArray tableTypes = rowSet.Columns[0].StringVal.Values;
 
                     HashSet<string> distinctTableTypes = new HashSet<string>(tableTypes);
@@ -719,7 +720,7 @@ namespace AdbcDrivers.HiveServer2.Hive2
 
                     IArrowArray[] dataArrays = new IArrowArray[]
                     {
-                tableTypesBuilder.Build()
+                        tableTypesBuilder.Build()
                     };
 
                     return new HiveInfoArrowStream(StandardSchemas.TableTypesSchema, dataArrays);
@@ -732,7 +733,8 @@ namespace AdbcDrivers.HiveServer2.Hive2
                 {
                     throw new HiveServer2Exception($"An unexpected error occurred while running metadata query. '{ApacheUtility.FormatExceptionMessage(ex)}'", ex);
                 }
-            }, ClassName + "." + nameof(GetTableTypes));
+            }, ClassName + "." + nameof(GetTableTypes)).ConfigureAwait(false);
+            return result.GetAwaiter().GetResult();
         }
 
         internal async Task PollForResponseAsync(TOperationHandle operationHandle, TCLIService.IAsync client, int pollTimeMilliseconds, CancellationToken cancellationToken = default)
@@ -744,10 +746,10 @@ namespace AdbcDrivers.HiveServer2.Hive2
                 int attempts = 0;
                 do
                 {
-                    if (statusResponse != null) { await Task.Delay(pollTimeMilliseconds, cancellationToken); }
+                    if (statusResponse != null) { await Task.Delay(pollTimeMilliseconds, cancellationToken).ConfigureAwait(false); }
                     TGetOperationStatusReq request = new(operationHandle);
                     attempts++;
-                    statusResponse = await client.GetOperationStatus(request, cancellationToken);
+                    statusResponse = await client.GetOperationStatus(request, cancellationToken).ConfigureAwait(false);
                 } while (statusResponse.OperationState == TOperationState.PENDING_STATE || statusResponse.OperationState == TOperationState.RUNNING_STATE);
                 activity?.AddEvent("hive2.thrift.poll_end",
                 [
@@ -764,12 +766,12 @@ namespace AdbcDrivers.HiveServer2.Hive2
                         .SetNativeError(statusResponse.ErrorCode);
 #pragma warning restore CS0618 // Type or member is obsolete
                 }
-            }, ClassName + "." + nameof(PollForResponseAsync));
+            }, ClassName + "." + nameof(PollForResponseAsync)).ConfigureAwait(false);
         }
 
         private string GetInfoTypeStringValue(TGetInfoType infoType)
         {
-            return this.TraceActivity(activity =>
+            var result = this.TraceActivityAsync(async activity =>
             {
                 TGetInfoReq req = new()
                 {
@@ -780,7 +782,7 @@ namespace AdbcDrivers.HiveServer2.Hive2
                 CancellationToken cancellationToken = ApacheUtility.GetCancellationToken(QueryTimeoutSeconds, ApacheUtility.TimeUnit.Seconds);
                 try
                 {
-                    TGetInfoResp getInfoResp = Client.GetInfo(req, cancellationToken).Result;
+                    TGetInfoResp getInfoResp = await Client.GetInfo(req, cancellationToken).ConfigureAwait(false);
                     HandleThriftResponse(getInfoResp.Status, activity);
 
                     return getInfoResp.InfoValue.StringValue;
@@ -793,7 +795,8 @@ namespace AdbcDrivers.HiveServer2.Hive2
                 {
                     throw new HiveServer2Exception($"An unexpected error occurred while running metadata query. '{ApacheUtility.FormatExceptionMessage(ex)}'", ex);
                 }
-            }, nameof(HiveServer2Connection) + "." + nameof(GetInfoTypeStringValue));
+            }, nameof(HiveServer2Connection) + "." + nameof(GetInfoTypeStringValue)).ConfigureAwait(false);
+            return result.GetAwaiter().GetResult();
         }
 
         protected override void Dispose(bool disposing)
@@ -808,14 +811,14 @@ namespace AdbcDrivers.HiveServer2.Hive2
 
         private void DisposeClient()
         {
-            this.TraceActivity(activity =>
+            var result = this.TraceActivityAsync(async activity =>
             {
                 if (_client != null && SessionHandle != null)
                 {
                     CancellationToken cancellationToken = ApacheUtility.GetCancellationToken(QueryTimeoutSeconds, ApacheUtility.TimeUnit.Seconds);
 
                     TCloseSessionReq r6 = new(SessionHandle);
-                    var resp = _client.CloseSession(r6, cancellationToken).Result;
+                    var resp = await _client.CloseSession(r6, cancellationToken).ConfigureAwait(false);
                     HandleThriftResponse(resp.Status, activity);
 
                     _transport?.Close();
@@ -826,13 +829,14 @@ namespace AdbcDrivers.HiveServer2.Hive2
                     _transport = null;
                     _client = null;
                 }
-            }, ClassName + "." + nameof(DisposeClient));
+            }, ClassName + "." + nameof(DisposeClient)).ConfigureAwait(false);
+            result.GetAwaiter().GetResult();
         }
 
         internal async Task<TGetResultSetMetadataResp> GetResultSetMetadataAsync(TOperationHandle operationHandle, TCLIService.IAsync client, CancellationToken cancellationToken = default)
         {
             TGetResultSetMetadataReq request = new(operationHandle);
-            TGetResultSetMetadataResp response = await client.GetResultSetMetadata(request, cancellationToken);
+            TGetResultSetMetadataResp response = await client.GetResultSetMetadata(request, cancellationToken).ConfigureAwait(false);
             return response;
         }
 
@@ -993,11 +997,11 @@ namespace AdbcDrivers.HiveServer2.Hive2
                 TGetCatalogsReq req = new TGetCatalogsReq(SessionHandle);
                 TrySetGetDirectResults(req);
 
-                TGetCatalogsResp resp = await Client.GetCatalogs(req, cancellationToken);
+                TGetCatalogsResp resp = await Client.GetCatalogs(req, cancellationToken).ConfigureAwait(false);
                 HandleThriftResponse(resp.Status, activity);
 
                 return resp;
-            }, ClassName + "." + nameof(GetCatalogsAsync));
+            }, ClassName + "." + nameof(GetCatalogsAsync)).ConfigureAwait(false);
         }
 
         internal async Task<TGetSchemasResp> GetSchemasAsync(
@@ -1023,11 +1027,11 @@ namespace AdbcDrivers.HiveServer2.Hive2
                     req.SchemaName = schemaName;
                 }
 
-                TGetSchemasResp resp = await Client.GetSchemas(req, cancellationToken);
+                TGetSchemasResp resp = await Client.GetSchemas(req, cancellationToken).ConfigureAwait(false);
                 HandleThriftResponse(resp.Status, activity);
 
                 return resp;
-            }, ClassName + "." + nameof(GetSchemasAsync));
+            }, ClassName + "." + nameof(GetSchemasAsync)).ConfigureAwait(false);
         }
 
         internal async Task<TGetTablesResp> GetTablesAsync(
@@ -1063,11 +1067,11 @@ namespace AdbcDrivers.HiveServer2.Hive2
                     req.TableTypes = tableTypes;
                 }
 
-                TGetTablesResp resp = await Client.GetTables(req, cancellationToken);
+                TGetTablesResp resp = await Client.GetTables(req, cancellationToken).ConfigureAwait(false);
                 HandleThriftResponse(resp.Status, activity);
 
                 return resp;
-            }, ClassName + "." + nameof(GetTablesAsync));
+            }, ClassName + "." + nameof(GetTablesAsync)).ConfigureAwait(false);
         }
 
         internal async Task<TGetColumnsResp> GetColumnsAsync(
@@ -1103,11 +1107,11 @@ namespace AdbcDrivers.HiveServer2.Hive2
                     req.ColumnName = columnName;
                 }
 
-                TGetColumnsResp resp = await Client.GetColumns(req, cancellationToken);
+                TGetColumnsResp resp = await Client.GetColumns(req, cancellationToken).ConfigureAwait(false);
                 HandleThriftResponse(resp.Status, activity);
 
                 return resp;
-            }, ClassName + "." + nameof(GetColumnsAsync));
+            }, ClassName + "." + nameof(GetColumnsAsync)).ConfigureAwait(false);
         }
 
         internal async Task<TGetPrimaryKeysResp> GetPrimaryKeysAsync(
@@ -1138,11 +1142,11 @@ namespace AdbcDrivers.HiveServer2.Hive2
                     req.TableName = tableName!;
                 }
 
-                TGetPrimaryKeysResp resp = await Client.GetPrimaryKeys(req, cancellationToken);
+                TGetPrimaryKeysResp resp = await Client.GetPrimaryKeys(req, cancellationToken).ConfigureAwait(false);
                 HandleThriftResponse(resp.Status, activity);
 
                 return resp;
-            }, ClassName + "." + nameof(GetPrimaryKeysAsync));
+            }, ClassName + "." + nameof(GetPrimaryKeysAsync)).ConfigureAwait(false);
         }
 
         internal async Task<TGetCrossReferenceResp> GetCrossReferenceAsync(
@@ -1188,17 +1192,17 @@ namespace AdbcDrivers.HiveServer2.Hive2
                     req.ForeignTableName = foreignTableName!;
                 }
 
-                TGetCrossReferenceResp resp = await Client.GetCrossReference(req, cancellationToken);
+                TGetCrossReferenceResp resp = await Client.GetCrossReference(req, cancellationToken).ConfigureAwait(false);
                 HandleThriftResponse(resp.Status, activity);
                 return resp;
-            }, ClassName + "." + nameof(GetCrossReferenceAsync));
+            }, ClassName + "." + nameof(GetCrossReferenceAsync)).ConfigureAwait(false);
         }
 
         internal abstract void SetPrecisionScaleAndTypeName(short columnType, string typeName, TableInfo? tableInfo, int columnSize, int decimalDigits);
 
         public override Schema GetTableSchema(string? catalog, string? dbSchema, string? tableName)
         {
-            return this.TraceActivity(activity =>
+            var result = this.TraceActivityAsync(async activity =>
             {
                 if (SessionHandle == null)
                 {
@@ -1214,10 +1218,10 @@ namespace AdbcDrivers.HiveServer2.Hive2
                 CancellationToken cancellationToken = ApacheUtility.GetCancellationToken(QueryTimeoutSeconds, ApacheUtility.TimeUnit.Seconds);
                 try
                 {
-                    var columnsResponse = Client.GetColumns(getColumnsReq, cancellationToken).Result;
+                    var columnsResponse = await Client.GetColumns(getColumnsReq, cancellationToken).ConfigureAwait(false);
                     HandleThriftResponse(columnsResponse.Status, activity);
 
-                    TRowSet rowSet = GetRowSetAsync(columnsResponse, cancellationToken).Result;
+                    TRowSet rowSet = await GetRowSetAsync(columnsResponse, cancellationToken).ConfigureAwait(false);
                     List<TColumn> columns = rowSet.Columns;
                     int rowCount = rowSet.Columns[3].StringVal.Values.Length;
 
@@ -1245,7 +1249,8 @@ namespace AdbcDrivers.HiveServer2.Hive2
                 {
                     throw new HiveServer2Exception($"An unexpected error occurred while running metadata query. '{ApacheUtility.FormatExceptionMessage(ex)}'", ex);
                 }
-            }, ClassName + "." + nameof(GetTableSchema));
+            }, ClassName + "." + nameof(GetTableSchema)).ConfigureAwait(false);
+            return result.GetAwaiter().GetResult();
         }
 
         /// <summary>
@@ -1318,9 +1323,9 @@ namespace AdbcDrivers.HiveServer2.Hive2
         {
             return await this.TraceActivityAsync(async activity =>
             {
-                await PollForResponseAsync(operationHandle, Client, PollTimeMillisecondsDefault, cancellationToken);
+                await PollForResponseAsync(operationHandle, Client, PollTimeMillisecondsDefault, cancellationToken).ConfigureAwait(false);
 
-                TFetchResultsResp fetchResp = await FetchNextAsync(operationHandle, Client, batchSize, cancellationToken);
+                TFetchResultsResp fetchResp = await FetchNextAsync(operationHandle, Client, batchSize, cancellationToken).ConfigureAwait(false);
                 if (fetchResp.Status.StatusCode == TStatusCode.ERROR_STATUS)
                 {
                     throw new HiveServer2Exception(fetchResp.Status.ErrorMessage)
@@ -1329,13 +1334,13 @@ namespace AdbcDrivers.HiveServer2.Hive2
                 }
                 activity?.AddTag(SemanticConventions.Db.Response.ReturnedRows, HiveServer2Reader.GetRowCount(fetchResp.Results, fetchResp.Results.Columns.Count));
                 return fetchResp.Results;
-            }, ClassName + "." + nameof(FetchResultsAsync));
+            }, ClassName + "." + nameof(FetchResultsAsync)).ConfigureAwait(false);
         }
 
         private static async Task<TFetchResultsResp> FetchNextAsync(TOperationHandle operationHandle, TCLIService.IAsync client, long batchSize, CancellationToken cancellationToken = default)
         {
             TFetchResultsReq request = new(operationHandle, TFetchOrientation.FETCH_NEXT, batchSize);
-            TFetchResultsResp response = await client.FetchResults(request, cancellationToken);
+            TFetchResultsResp response = await client.FetchResults(request, cancellationToken).ConfigureAwait(false);
             return response;
         }
 

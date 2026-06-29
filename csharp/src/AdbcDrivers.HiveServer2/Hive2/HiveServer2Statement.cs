@@ -536,7 +536,7 @@ namespace AdbcDrivers.HiveServer2.Hive2
 
         protected virtual async Task<QueryResult> GetTablesAsync(CancellationToken cancellationToken = default)
         {
-            List<string>? tableTypesList = this.TableTypes?.Split(',').ToList();
+            List<string>? tableTypesList = string.IsNullOrEmpty(this.TableTypes) ? null : this.TableTypes!.Split(',').ToList();
             IResponse response = await Connection.GetTablesAsync(
                 EscapePatternWildcardsInName(CatalogName),
                 EscapePatternWildcardsInName(SchemaName),

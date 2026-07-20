@@ -70,7 +70,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup .NET ${{ matrix.dotnet }}
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: ${{ matrix.dotnet }}
 
@@ -99,7 +99,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup .NET 8.0.x
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 8.0.x
 
@@ -153,7 +153,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup .NET 10
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           # NativeAOT requires net10. Using 10.0.x selects the latest
           # available SDK.
@@ -207,7 +207,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup .NET 10
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
 

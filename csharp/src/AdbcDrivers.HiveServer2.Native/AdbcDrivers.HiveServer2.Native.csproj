@@ -21,6 +21,20 @@
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <OutputType>Library</OutputType>
+    <!--
+      The AOT shared library is named for the ADBC driver naming convention
+      (adbc_driver_<name>), not for the MSBuild project. Every other ADBC
+      Driver Foundry driver ships as libadbc_driver_<name>.so /
+      adbc_driver_<name>.dll, the ADBC driver manager and `dbc` discover
+      drivers by that name, and the Foundry packaging tooling derives the
+      driver name by splitting the library filename on `_`. NativeAOT omits
+      the `lib` prefix on Unix, which that tooling tolerates.
+    -->
+    <AssemblyName>adbc_driver_hiveserver2</AssemblyName>
+    <!-- Both default to $(AssemblyName); pin them so the rename above doesn't
+         leak into the C# namespace or rename the native NuGet package. -->
+    <RootNamespace>AdbcDrivers.HiveServer2.Native</RootNamespace>
+    <PackageId>AdbcDrivers.HiveServer2.Native</PackageId>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <PublishAot>true</PublishAot>
     <IsAotCompatible>true</IsAotCompatible>

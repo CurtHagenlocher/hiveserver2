@@ -5,6 +5,18 @@
     <EnableNETAnalyzers>true</EnableNETAnalyzers>
   </PropertyGroup>
 
+  <!--
+    This is the one project in the repo intended for nuget.org. IsPackable is
+    stated explicitly rather than left to the SDK default because
+    Directory.Build.props gates the LICENSE/README/icon Content items on it,
+    and without a Description the generated nuspec carries NuGet's placeholder
+    text ("Package Description").
+  -->
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <Description>An ADBC driver for databases speaking the HiveServer2 protocol, including Apache Hive, Apache Impala and Apache Spark. Provides Arrow-native result sets over Thrift, with support for the standard, HTTP and SASL transports.</Description>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="ApacheThrift" />
   </ItemGroup>

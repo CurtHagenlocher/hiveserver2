@@ -19,6 +19,10 @@
     <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
   <ItemGroup>
+    <!-- ADBC -->
+    <PackageVersion Include="Apache.Arrow.Adbc" Version="0.24.0" />
+    <PackageVersion Include="Apache.Arrow.Adbc.Telemetry.Traces.Listeners" Version="0.24.0" />
+    <PackageVersion Include="Apache.Arrow.Adbc.Testing" Version="0.24.0" />
     <!-- Compression -->
     <PackageVersion Include="coverlet.collector" Version="10.0.1" />
     <PackageVersion Include="coverlet.msbuild" Version="6.0.4" />

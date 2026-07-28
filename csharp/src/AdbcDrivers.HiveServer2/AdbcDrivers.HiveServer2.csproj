@@ -13,8 +13,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\arrow-adbc\csharp\src\Telemetry\Traces\Listeners\Apache.Arrow.Adbc.Telemetry.Traces.Listeners.csproj" />
-    <ProjectReference Include="..\..\arrow-adbc\csharp\src\Apache.Arrow.Adbc\Apache.Arrow.Adbc.csproj" />
+    <PackageReference Include="Apache.Arrow.Adbc" />
+    <PackageReference Include="Apache.Arrow.Adbc.Telemetry.Traces.Listeners" />
   </ItemGroup>
 
 </Project>

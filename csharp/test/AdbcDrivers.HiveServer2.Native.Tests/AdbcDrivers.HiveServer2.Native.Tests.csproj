@@ -24,10 +24,10 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
     <PackageReference Include="Xunit.SkippableFact" />
+    <PackageReference Include="Apache.Arrow.Adbc" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\arrow-adbc\csharp\src\Apache.Arrow.Adbc\Apache.Arrow.Adbc.csproj" />
     <ProjectReference Include="..\..\src\AdbcDrivers.HiveServer2\AdbcDrivers.HiveServer2.csproj" />
     <ProjectReference Include="..\AdbcDrivers.HiveServer2.TestServer\AdbcDrivers.HiveServer2.TestServer.csproj" />
   </ItemGroup>

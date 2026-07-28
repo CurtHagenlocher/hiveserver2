@@ -18,7 +18,6 @@ using System.Runtime.InteropServices;
 using AdbcDrivers.HiveServer2.Hive2;
 using Apache.Arrow.Adbc;
 using Apache.Arrow.Adbc.C;
-using Apache.Arrow.C;
 
 namespace AdbcDrivers.HiveServer2.Native
 {
@@ -41,16 +40,6 @@ namespace AdbcDrivers.HiveServer2.Native
         [UnmanagedCallersOnly(EntryPoint = "AdbcDriverInit")]
         public static AdbcStatusCode AdbcDriverInit(int version, CAdbcDriver* driver, CAdbcError* error)
         {
-            // The HiveServer2 column decoders read wire bytes straight into managed
-            // byte[] and wrap them as Arrow buffers (zero-copy). Apache.Arrow's C
-            // data interface exporter normally only exports native (off-heap)
-            // buffers; opting into managed-memory export lets it pin those managed
-            // buffers for the duration of the export instead, so result columns can
-            // cross the C ABI without the driver having to re-pack into native
-            // memory. This is set on the export side — inside this AOT-published
-            // library, which carries its own copy of Apache.Arrow.
-            CArrowArrayExporter.EnableManagedMemoryExport = true;
-
             return CAdbcDriverExporter.AdbcDriverInit(version, driver, error, new HiveServer2Driver());
         }
     }

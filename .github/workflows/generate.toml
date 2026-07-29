@@ -1,3 +1,4 @@
+#:schema https://raw.githubusercontent.com/adbc-drivers/dev/refs/heads/main/schema/generate-schema.json
 # Copyright (c) 2025 ADBC Drivers Contributors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,5 +15,8 @@
 
 driver = "hiveserver2"
 
-[lang]
-go = "true"
+# No [lang] section: adbc-gen-workflow only supports `go` and `rust`, and this
+# repository is C#-only. This file previously declared `go = "true"`, which was
+# never accurate. Only the shared dev*.yaml workflows are generated here; the
+# C# build, test and release workflows (csharp.yml, csharp_release.yaml) are
+# maintained by hand, as are csharp/pixi.toml and csharp/manifest.toml.

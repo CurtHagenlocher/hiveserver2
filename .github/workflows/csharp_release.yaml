@@ -1,0 +1,309 @@
+# Copyright (c) 2026 ADBC Drivers Contributors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#         http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Cuts a release of the C# HiveServer2 driver. Two artifacts come out of it:
+#
+#   1. AdbcDrivers.HiveServer2 on nuget.org — the managed driver, referenced
+#      directly by .NET consumers.
+#   2. A draft GitHub Release carrying NativeAOT shared libraries as
+#      hiveserver2_<platform>_<arch>_v<version>.tar.gz plus a manifest.yaml,
+#      the layout the other ADBC Driver Foundry drivers publish and that
+#      `dbc install` consumes.
+#
+# Triggered by pushing a csharp/vX.Y.Z tag, matching the tag convention in
+# adbc-drivers/databricks' csharp/RELEASE_PROCESS.md. The csharp/ prefix is
+# also what adbc-release uses to scope the generated changelog to this
+# directory and to locate csharp/manifest.toml.
+#
+# workflow_dispatch runs everything except the nuget.org push and the release
+# creation, so the packaging path can be exercised without cutting a release.
+
+name: C# Release
+
+on:
+  push:
+    tags:
+      - "csharp/v**"
+
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.repository }}-${{ github.ref }}-${{ github.workflow }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+jobs:
+  # Resolve the release version once so the NuGet package version and the
+  # tarball names cannot drift apart.
+  version:
+    name: "Resolve version"
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      is_release: ${{ steps.resolve.outputs.is_release }}
+    steps:
+      - name: Resolve version from tag
+        id: resolve
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+        run: |
+          if [[ "${REF_TYPE}" == "tag" ]]; then
+            # csharp/v0.24.0 -> 0.24.0
+            version="${REF_NAME#csharp/v}"
+            if [[ "${version}" == "${REF_NAME}" ]]; then
+              echo "Tag ${REF_NAME} is not of the form csharp/vX.Y.Z" >&2
+              exit 1
+            fi
+            echo "is_release=true" >> "$GITHUB_OUTPUT"
+          else
+            # Dry run: a placeholder version that will never be published.
+            version="0.0.0-dev"
+            echo "is_release=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Version: ${version}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+  # AOT-publish the driver on each target platform and run the C-ABI interop
+  # tests against the freshly published library, so a binary that fails the
+  # round-trip never reaches a release. NativeAOT cannot cross-compile, hence
+  # one runner per platform.
+  build:
+    name: "Build hiveserver2/${{ matrix.platform }}_${{ matrix.arch }}"
+    needs: version
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { platform: linux, arch: amd64, runner: ubuntu-latest, rid: linux-x64 }
+          - { platform: linux, arch: arm64, runner: ubuntu-24.04-arm, rid: linux-arm64 }
+          - { platform: macos, arch: arm64, runner: macos-latest, rid: osx-arm64 }
+          - { platform: windows, arch: amd64, runner: windows-2022, rid: win-x64 }
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v5
+        with:
+          # NativeAOT requires net10.
+          dotnet-version: '10.0.x'
+
+      - name: Setup MSVC (for NativeAOT linker)
+        if: runner.os == 'Windows'
+        # Third-party action; activates vcvars64 so ilc's downstream link.exe
+        # step can find link.exe/lib.exe and the Windows SDK. Pinned to a SHA
+        # since it isn't an official GitHub action.
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756  # v1
+
+      - name: Publish AOT driver and run interop tests
+        run: |
+          ./ci/scripts/csharp_aot.sh "${{ github.workspace }}" "${{ matrix.rid }}"
+
+      # Named drivers-<platform>-<arch> because adbc-gen-package takes the
+      # platform and architecture for each package from its input directory
+      # name.
+      - name: Upload native library
+        uses: actions/upload-artifact@v7
+        with:
+          name: drivers-${{ matrix.platform }}-${{ matrix.arch }}
+          # Exactly one shared library matches per OS; debug symbols
+          # (.pdb/.dbg/.dSYM) are deliberately left out of the release.
+          path: |
+            ${{ github.workspace }}/csharp/artifacts/aot-fixture/adbc_driver_hiveserver2.so
+            ${{ github.workspace }}/csharp/artifacts/aot-fixture/adbc_driver_hiveserver2.dylib
+            ${{ github.workspace }}/csharp/artifacts/aot-fixture/adbc_driver_hiveserver2.dll
+          if-no-files-found: error
+          retention-days: 7
+
+  # Assemble the Foundry release tarballs. Separate from `build` because it
+  # needs every platform's library at once.
+  package:
+    name: "Generate packages"
+    needs:
+      - version
+      - build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: recursive
+          persist-credentials: false
+
+      - uses: prefix-dev/setup-pixi@a09b6247153796b190642a2b53fac4241043cf6f  # v0.10.0
+        with:
+          pixi-version: v0.72.0
+          run-install: false
+
+      - name: Download per-platform native libraries
+        uses: actions/download-artifact@v8
+        with:
+          pattern: "drivers-*"
+          path: ${{ github.workspace }}/drivers
+
+      - name: Generate packages
+        run: |
+          ./ci/scripts/csharp_release_package.sh \
+            "${{ github.workspace }}" \
+            "${{ github.workspace }}/drivers" \
+            "${{ github.workspace }}/packages" \
+            "${{ github.workspace }}/release-assets" \
+            "${{ needs.version.outputs.is_release }}"
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: all-packages
+          path: ${{ github.workspace }}/release-assets
+          if-no-files-found: error
+          retention-days: 7
+
+  # Pack the managed driver. Independent of the AOT legs — it only needs the
+  # resolved version — so it runs alongside them.
+  nuget:
+    name: "Pack NuGet package"
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          # The driver multi-targets up to net10.0, so packing needs the net10
+          # SDK even though the package also carries netstandard2.0/net472/net8.0.
+          dotnet-version: '10.0.x'
+
+      - name: Pack
+        run: |
+          ./ci/scripts/csharp_pack.sh \
+            "${{ github.workspace }}" \
+            "${{ github.workspace }}/nuget" \
+            "${{ needs.version.outputs.version }}"
+
+      - name: Upload NuGet package
+        uses: actions/upload-artifact@v7
+        with:
+          name: nuget-package
+          path: |
+            ${{ github.workspace }}/nuget/*.nupkg
+            ${{ github.workspace }}/nuget/*.snupkg
+          if-no-files-found: error
+          retention-days: 7
+
+  # Publish. Everything above must be green first: a failed interop test, a
+  # failed pack, or a failed package generation stops the release before
+  # anything leaves the repository.
+  publish:
+    name: "Publish"
+    needs:
+      - version
+      - package
+      - nuget
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      # Needed by adbc-release / gh release create.
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: recursive
+          persist-credentials: false
+
+      - uses: prefix-dev/setup-pixi@a09b6247153796b190642a2b53fac4241043cf6f  # v0.10.0
+        with:
+          pixi-version: v0.72.0
+          run-install: false
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Download packages
+        uses: actions/download-artifact@v8
+        with:
+          name: all-packages
+          path: ${{ github.workspace }}/release-assets
+
+      - name: Download NuGet package
+        uses: actions/download-artifact@v8
+        with:
+          name: nuget-package
+          path: ${{ github.workspace }}/nuget
+
+      # Push to nuget.org before creating the release: the release is created
+      # as a draft and can be discarded, whereas a NuGet push is permanent, so
+      # the irreversible step should not run after a step that can still fail.
+      - name: Push to nuget.org
+        if: needs.version.outputs.is_release == 'true'
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          if [[ -z "${NUGET_API_KEY}" ]]; then
+            echo "NUGET_API_KEY secret is not set" >&2
+            exit 1
+          fi
+          dotnet nuget push "${{ github.workspace }}"/nuget/*.nupkg \
+            --api-key "${NUGET_API_KEY}" \
+            --source https://api.nuget.org/v3/index.json \
+            --skip-duplicate
+
+      # adbc-release creates a *draft* release with a changelog generated from
+      # the commits touching csharp/ since the previous csharp/v tag; the
+      # assets are attached to that draft and a human publishes it.
+      - name: Create draft release and upload assets
+        if: needs.version.outputs.is_release == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        working-directory: csharp
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          pixi run release "${{ github.workspace }}" "${tag}"
+          gh release upload "${tag}" "${{ github.workspace }}"/release-assets/*
+
+      - name: Release (dry run)
+        if: needs.version.outputs.is_release != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        working-directory: csharp
+        run: |
+          echo "Would push to nuget.org:"
+          ls -l "${{ github.workspace }}"/nuget
+          echo "Would attach to the GitHub Release:"
+          ls -l "${{ github.workspace }}"/release-assets

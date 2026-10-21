@@ -52,6 +52,8 @@ namespace AdbcDrivers.HiveServer2.Hive2
             _transport = transport;
         }
 
+        internal bool IsInvalidated => Volatile.Read(ref _invalidated) != 0;
+
         /// <summary>
         /// Executes a client operation in a thread-safe manner.
         /// </summary>
@@ -68,7 +70,7 @@ namespace AdbcDrivers.HiveServer2.Hive2
             try
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (Volatile.Read(ref _invalidated) != 0)
+                if (IsInvalidated)
                 {
                     throw new HiveServer2Exception(
                         "The connection cannot be reused after an RPC was cancelled. Create a new connection.",

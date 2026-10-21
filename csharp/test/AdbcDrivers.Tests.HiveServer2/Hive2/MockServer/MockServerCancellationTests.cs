@@ -175,6 +175,61 @@ namespace AdbcDrivers.Tests.HiveServer2.Hive2.MockServer
             await AssertStandardConnectionInvalidated(connection);
         }
 
+        [Theory]
+        [InlineData(false, false)]
+        [InlineData(false, true)]
+        [InlineData(true, false)]
+        [InlineData(true, true)]
+        public async Task CancelDuringStandardFetch_ReaderDisposalPreservesCancellation(
+            bool duringResponse, bool disposeWhileUnwinding)
+        {
+            using var server = new HiveServer2StandardTestServer(new HiveServer2StubHandler());
+            using var connection = new StandardCancellationTestConnection(StandardParameters(server));
+            await connection.OpenAsync();
+            using var statement = connection.CreateStatement();
+            statement.SqlQuery = "SELECT 42";
+            QueryResult result = await statement.ExecuteQueryAsync();
+            using var cancellation = new CancellationTokenSource();
+            bool cancelled = false;
+            void CancelFetch(string? message)
+            {
+                if (!cancelled && message == "FetchResults")
+                {
+                    cancelled = true;
+                    cancellation.Cancel();
+                }
+            }
+            if (duringResponse)
+            {
+                connection.Protocol.OnRead = CancelFetch;
+            }
+            else
+            {
+                connection.Protocol.OnWrite = (message, _) => CancelFetch(message);
+            }
+
+            var stream = result.Stream!;
+            if (disposeWhileUnwinding)
+            {
+                await Assert.ThrowsAsync<TimeoutException>(async () =>
+                {
+                    using (stream)
+                    {
+                        await stream.ReadNextRecordBatchAsync(cancellation.Token);
+                    }
+                });
+            }
+            else
+            {
+                await Assert.ThrowsAsync<TimeoutException>(
+                    () => stream.ReadNextRecordBatchAsync(cancellation.Token).AsTask());
+            }
+            Assert.True(cancelled);
+            stream.Dispose();
+            Assert.DoesNotContain("CloseOperation", connection.Protocol.Requests);
+            await AssertStandardConnectionInvalidated(connection);
+        }
+
         [Fact]
         public async Task CancelWhileAwaitingStandardResponse_AbortsReadAndInvalidatesConnection()
         {

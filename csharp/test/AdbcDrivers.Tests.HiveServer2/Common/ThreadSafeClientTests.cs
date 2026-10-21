@@ -24,10 +24,9 @@ using Xunit;
 namespace AdbcDrivers.Tests.HiveServer2.Common
 {
     /// <summary>
-    /// Direct unit tests for <see cref="ThreadSafeClient"/>. The HiveServer2
-    /// driver itself never instantiates this wrapper — it exists as
-    /// infrastructure for downstream drivers (e.g. Databricks) — so without
-    /// these tests it sits at 0% coverage.
+    /// Direct unit tests for the synchronization and forwarding behavior of
+    /// <see cref="ThreadSafeClient"/>. Standard-transport cancellation and
+    /// invalidation are exercised against the mock server.
     /// </summary>
     public class ThreadSafeClientTests
     {

@@ -23,7 +23,9 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Apache.Arrow.Adbc;
 using Apache.Hive.Service.Rpc.Thrift;
+using Thrift.Transport;
 
 namespace AdbcDrivers.HiveServer2.Hive2
 {
@@ -34,16 +36,20 @@ namespace AdbcDrivers.HiveServer2.Hive2
     internal class ThreadSafeClient : IDisposable, TCLIService.IAsync
     {
         private readonly TCLIService.IAsync _client;
+        private readonly TTransport? _transport;
         private readonly SemaphoreSlim _semaphore = new SemaphoreSlim(1, 1);
+        private int _invalidated;
         private bool _disposed = false;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="ThreadSafeClient"/> class.
         /// </summary>
         /// <param name="client">The TCLIService client to wrap.</param>
-        internal ThreadSafeClient(TCLIService.IAsync client)
+        /// <param name="transport">An optional socket transport to invalidate if an active RPC is cancelled.</param>
+        internal ThreadSafeClient(TCLIService.IAsync client, TTransport? transport = null)
         {
             _client = client ?? throw new ArgumentNullException(nameof(client));
+            _transport = transport;
         }
 
         /// <summary>
@@ -61,11 +67,46 @@ namespace AdbcDrivers.HiveServer2.Hive2
             await _semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
-                return await operation(_client, cancellationToken).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (Volatile.Read(ref _invalidated) != 0)
+                {
+                    throw new HiveServer2Exception(
+                        "The connection cannot be reused after an RPC was cancelled. Create a new connection.",
+                        AdbcStatusCode.InvalidState);
+                }
+
+                // Closing the socket also interrupts reads on frameworks where
+                // NetworkStream does not observe cancellation once a read starts.
+                using CancellationTokenRegistration registration = _transport != null
+                    ? cancellationToken.Register(Invalidate)
+                    : default;
+                try
+                {
+                    TResult result = await operation(_client, cancellationToken).ConfigureAwait(false);
+                    if (_transport != null) cancellationToken.ThrowIfCancellationRequested();
+                    return result;
+                }
+                catch (Exception ex) when (_transport != null &&
+                    (cancellationToken.IsCancellationRequested ||
+                     ApacheUtility.ContainsException(ex, out OperationCanceledException? _)))
+                {
+                    Invalidate();
+                    // Closing an interrupted stream can surface as IOException or
+                    // ObjectDisposedException rather than OperationCanceledException.
+                    throw new OperationCanceledException("The RPC was cancelled and the connection was closed.", ex, cancellationToken);
+                }
             }
             finally
             {
                 _semaphore.Release();
+            }
+        }
+
+        private void Invalidate()
+        {
+            if (Interlocked.Exchange(ref _invalidated, 1) == 0)
+            {
+                _transport?.Close();
             }
         }
 
@@ -238,6 +279,10 @@ namespace AdbcDrivers.HiveServer2.Hive2
         {
             if (!_disposed)
             {
+                if (_transport != null && _client is IDisposable disposableClient)
+                {
+                    disposableClient.Dispose();
+                }
                 _semaphore.Dispose();
                 _disposed = true;
             }

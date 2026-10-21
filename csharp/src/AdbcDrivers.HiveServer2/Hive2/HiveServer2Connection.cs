@@ -45,6 +45,7 @@ using Apache.Hive.Service.Rpc.Thrift;
 using Thrift;
 using Thrift.Protocol;
 using Thrift.Transport;
+using Thrift.Transport.Client;
 
 namespace AdbcDrivers.HiveServer2.Hive2
 {
@@ -485,6 +486,10 @@ namespace AdbcDrivers.HiveServer2.Hive2
             try
             {
                 _transport?.Close();
+                if (_client is IDisposable disposableClient)
+                {
+                    disposableClient.Dispose();
+                }
             }
             catch
             {
@@ -512,7 +517,11 @@ namespace AdbcDrivers.HiveServer2.Hive2
 
         protected virtual TCLIService.IAsync CreateTCLIServiceClient(TProtocol protocol)
         {
-            return new TCLIService.Client(protocol);
+            if (protocol.Transport is THttpTransport)
+            {
+                return new TCLIService.Client(protocol, new UninterruptibleWriteProtocol(protocol));
+            }
+            return new ThreadSafeClient(new TCLIService.Client(protocol), protocol.Transport);
         }
 
         protected virtual IEnumerable<TProtocolVersion> FallbackProtocolVersions => Enumerable.Empty<TProtocolVersion>();
@@ -848,21 +857,28 @@ namespace AdbcDrivers.HiveServer2.Hive2
         {
             var result = this.TraceActivityAsync(async activity =>
             {
-                if (_client != null && SessionHandle != null)
+                if (_client != null)
                 {
-                    CancellationToken cancellationToken = ApacheUtility.GetCancellationToken(QueryTimeoutSeconds, ApacheUtility.TimeUnit.Seconds);
-
-                    TCloseSessionReq r6 = new(SessionHandle);
-                    var resp = await _client.CloseSession(r6, cancellationToken).ConfigureAwait(false);
-                    HandleThriftResponse(resp.Status, activity);
-
-                    _transport?.Close();
-                    if (_client is IDisposable disposableClient)
+                    try
                     {
-                        disposableClient.Dispose();
+                        if (SessionHandle != null && _transport?.IsOpen == true)
+                        {
+                            CancellationToken cancellationToken = ApacheUtility.GetCancellationToken(QueryTimeoutSeconds, ApacheUtility.TimeUnit.Seconds);
+                            TCloseSessionReq r6 = new(SessionHandle);
+                            var resp = await _client.CloseSession(r6, cancellationToken).ConfigureAwait(false);
+                            HandleThriftResponse(resp.Status, activity);
+                        }
                     }
-                    _transport = null;
-                    _client = null;
+                    finally
+                    {
+                        _transport?.Close();
+                        if (_client is IDisposable disposableClient)
+                        {
+                            disposableClient.Dispose();
+                        }
+                        _transport = null;
+                        _client = null;
+                    }
                 }
             }, ClassName + "." + nameof(DisposeClient)).ConfigureAwait(false);
             result.GetAwaiter().GetResult();

@@ -281,7 +281,7 @@ namespace AdbcDrivers.HiveServer2.Hive2
         {
             if (!_disposed)
             {
-                if (_transport != null && _client is IDisposable disposableClient)
+                if (_client is IDisposable disposableClient)
                 {
                     disposableClient.Dispose();
                 }

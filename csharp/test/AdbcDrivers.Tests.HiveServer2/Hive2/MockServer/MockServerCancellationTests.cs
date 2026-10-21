@@ -35,6 +35,63 @@ namespace AdbcDrivers.Tests.HiveServer2.Hive2.MockServer
     [Trait("Category", "MockServer")]
     public class MockServerCancellationTests
     {
+        [Fact]
+        public async Task ConcurrentHttpQueries_DoNotInterleaveRequests()
+        {
+            var headerWritten = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var releaseRequest = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var stub = new HiveServer2StubHandler
+            {
+                OnExecuteStatement = request => request.Statement switch
+                {
+                    "SELECT 1" => MockResult.SingleBigint(1),
+                    "SELECT 2" => MockResult.SingleBigint(2),
+                    _ => throw new InvalidOperationException($"Unexpected statement: {request.Statement}"),
+                },
+            };
+            using var server = new HiveServer2TestServer(stub);
+            var parameters = MockServerScenario.CopyParameters(HiveMockServer.DefaultParameters);
+            parameters[AdbcOptions.Uri] = server.Uri.AbsoluteUri;
+            parameters[ApacheParameters.QueryTimeoutSeconds] = "5";
+            using var connection = new CancellationTestConnection(parameters);
+            await connection.OpenAsync();
+            int executeRequests = 0;
+            connection.Protocol.AfterMessageBeginAsync = async message =>
+            {
+                if (message == "ExecuteStatement" && Interlocked.Increment(ref executeRequests) == 1)
+                {
+                    headerWritten.SetResult(true);
+                    await releaseRequest.Task;
+                }
+            };
+            using var firstStatement = connection.CreateStatement();
+            using var secondStatement = connection.CreateStatement();
+            firstStatement.SqlQuery = "SELECT 1";
+            secondStatement.SqlQuery = "SELECT 2";
+            Task<QueryResult> first = firstStatement.ExecuteQueryAsync().AsTask();
+            Task<QueryResult> second;
+            try
+            {
+                Assert.Same(headerWritten.Task,
+                    await Task.WhenAny(headerWritten.Task, Task.Delay(TimeSpan.FromSeconds(10))));
+                second = secondStatement.ExecuteQueryAsync().AsTask();
+            }
+            finally
+            {
+                releaseRequest.SetResult(true);
+            }
+
+            QueryResult[] results = await Task.WhenAll(first, second);
+            using var firstStream = results[0].Stream!;
+            using var secondStream = results[1].Stream!;
+            using var firstBatch = await firstStream.ReadNextRecordBatchAsync();
+            using var secondBatch = await secondStream.ReadNextRecordBatchAsync();
+            Assert.NotNull(firstBatch);
+            Assert.NotNull(secondBatch);
+            Assert.Equal(1L, Assert.IsType<Int64Array>(firstBatch.Column(0)).GetValue(0));
+            Assert.Equal(2L, Assert.IsType<Int64Array>(secondBatch.Column(0)).GetValue(0));
+        }
+
         [Theory]
         [InlineData("ExecuteStatement", false)]
         [InlineData("ExecuteStatement", true)]
@@ -389,6 +446,7 @@ namespace AdbcDrivers.Tests.HiveServer2.Hive2.MockServer
 
             public Action<string?, bool>? OnWrite { get; set; }
             public Action<string>? OnRead { get; set; }
+            public Func<string, Task>? AfterMessageBeginAsync { get; set; }
             public List<string> Requests { get; } = new();
             public List<string> Responses { get; } = new();
 
@@ -399,6 +457,10 @@ namespace AdbcDrivers.Tests.HiveServer2.Hive2.MockServer
                 Requests.Add(message.Name);
                 // Cancel only after real bytes have reached the transport's buffer.
                 OnWrite?.Invoke(_message, false);
+                if (AfterMessageBeginAsync != null)
+                {
+                    await AfterMessageBeginAsync(message.Name);
+                }
             }
 
             public override async Task WriteFieldBeginAsync(TField field, CancellationToken cancellationToken)

@@ -519,7 +519,8 @@ namespace AdbcDrivers.HiveServer2.Hive2
         {
             if (protocol.Transport is THttpTransport)
             {
-                return new TCLIService.Client(protocol, new UninterruptibleWriteProtocol(protocol));
+                return new ThreadSafeClient(
+                    new TCLIService.Client(protocol, new UninterruptibleWriteProtocol(protocol)));
             }
             return new ThreadSafeClient(new TCLIService.Client(protocol), protocol.Transport);
         }

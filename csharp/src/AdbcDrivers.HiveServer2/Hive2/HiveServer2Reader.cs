@@ -476,7 +476,8 @@ namespace AdbcDrivers.HiveServer2.Hive2
         /// <exception cref="HiveServer2Exception" />
         internal static async Task<TCloseOperationResp?> CloseOperationAsync(IHiveServer2Statement statement, IResponse response)
         {
-            if (response.DirectResults?.CloseOperation?.Status?.StatusCode != TStatusCode.SUCCESS_STATUS)
+            if (response.DirectResults?.CloseOperation?.Status?.StatusCode != TStatusCode.SUCCESS_STATUS &&
+                statement.Client is not ThreadSafeClient { IsInvalidated: true })
             {
                 CancellationToken cancellationToken = ApacheUtility.GetCancellationToken(statement.QueryTimeoutSeconds, ApacheUtility.TimeUnit.Seconds);
                 TCloseOperationReq request = new TCloseOperationReq(response.OperationHandle!);

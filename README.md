@@ -23,6 +23,14 @@ HiveServer2-based servers (Hive, Impala, and Spark), implemented in C# language.
 
 At this time pre-packaged drivers are not yet available. See [Building](#building) for instructions on building from source.
 
+## Cancellation
+
+On standard (TCP, including TLS/SASL) connections, cancelling or timing out an
+in-flight Thrift RPC closes and invalidates the connection to avoid reusing a
+partially written or read stream. Create a new connection before issuing more
+requests. Cancellation while waiting to start an RPC does not invalidate the connection.
+HTTP connections remain reusable after cancellation.
+
 ## Building
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).

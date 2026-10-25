@@ -24,10 +24,9 @@ using Xunit;
 namespace AdbcDrivers.Tests.HiveServer2.Common
 {
     /// <summary>
-    /// Direct unit tests for <see cref="ThreadSafeClient"/>. The HiveServer2
-    /// driver itself never instantiates this wrapper — it exists as
-    /// infrastructure for downstream drivers (e.g. Databricks) — so without
-    /// these tests it sits at 0% coverage.
+    /// Direct unit tests for the synchronization and forwarding behavior of
+    /// <see cref="ThreadSafeClient"/>. Standard-transport cancellation and
+    /// invalidation are exercised against the mock server.
     /// </summary>
     public class ThreadSafeClientTests
     {
@@ -46,11 +45,13 @@ namespace AdbcDrivers.Tests.HiveServer2.Common
         }
 
         [Fact]
-        public void Dispose_IsIdempotent()
+        public void Dispose_WithoutTransport_DisposesWrappedClientOnce()
         {
-            ThreadSafeClient c = NewClient();
+            var inner = new StubClient();
+            ThreadSafeClient c = NewClient(inner);
             c.Dispose();
             c.Dispose();
+            Assert.Equal(1, inner.DisposeCalls);
         }
 
         [Fact]
@@ -172,8 +173,9 @@ namespace AdbcDrivers.Tests.HiveServer2.Common
         /// that just counts invocations and returns a fresh response object —
         /// enough to exercise every pass-through path in ThreadSafeClient.
         /// </summary>
-        private sealed class StubClient : TCLIService.IAsync
+        private sealed class StubClient : TCLIService.IAsync, IDisposable
         {
+            public int DisposeCalls;
             public int OpenSessionCalls;
             public int CloseSessionCalls;
             public int GetInfoCalls;
@@ -199,6 +201,8 @@ namespace AdbcDrivers.Tests.HiveServer2.Common
             public int SetClientInfoCalls;
             public int UploadDataCalls;
             public int DownloadDataCalls;
+
+            public void Dispose() => Interlocked.Increment(ref DisposeCalls);
 
             public Task<TOpenSessionResp> OpenSession(TOpenSessionReq req, CancellationToken ct = default) { Interlocked.Increment(ref OpenSessionCalls); return Task.FromResult(new TOpenSessionResp()); }
             public Task<TCloseSessionResp> CloseSession(TCloseSessionReq req, CancellationToken ct = default) { Interlocked.Increment(ref CloseSessionCalls); return Task.FromResult(new TCloseSessionResp()); }

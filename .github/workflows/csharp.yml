@@ -66,7 +66,6 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
-          submodules: recursive
           persist-credentials: false
 
       - name: Setup .NET ${{ matrix.dotnet }}
@@ -95,7 +94,6 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
-          submodules: recursive
           persist-credentials: false
 
       - name: Setup .NET 8.0.x
@@ -151,7 +149,6 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
-          submodules: recursive
           persist-credentials: false
 
       - name: Setup .NET 10
@@ -205,7 +202,6 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
-          submodules: recursive
           persist-credentials: false
 
       - name: Setup .NET 10

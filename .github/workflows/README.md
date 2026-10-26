@@ -37,7 +37,7 @@ This directory contains GitHub Actions workflows for automated testing and valid
 - **Timeout**: 15 minutes per job
 
 **Steps**:
-1. Checkout repository with submodules (uses exact PR commit SHA for safety)
+1. Checkout repository (uses exact PR commit SHA for safety)
 2. Setup .NET SDK
 3. Build using `ci/scripts/csharp_build.sh`
 4. Test using `ci/scripts/csharp_test.sh`

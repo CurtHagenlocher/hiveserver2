@@ -20,9 +20,9 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- ADBC -->
-    <PackageVersion Include="Apache.Arrow.Adbc" Version="0.24.0" />
-    <PackageVersion Include="Apache.Arrow.Adbc.Telemetry.Traces.Listeners" Version="0.24.0" />
-    <PackageVersion Include="Apache.Arrow.Adbc.Testing" Version="0.24.0" />
+    <PackageVersion Include="Apache.Arrow.Adbc" Version="1.0.0" />
+    <PackageVersion Include="Apache.Arrow.Adbc.Telemetry.Traces.Listeners" Version="1.0.0" />
+    <PackageVersion Include="Apache.Arrow.Adbc.Testing" Version="1.0.0" />
     <!-- Compression -->
     <PackageVersion Include="coverlet.collector" Version="10.1.0" />
     <PackageVersion Include="coverlet.msbuild" Version="6.0.4" />

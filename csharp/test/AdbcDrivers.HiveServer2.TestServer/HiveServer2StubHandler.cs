@@ -45,6 +45,15 @@ namespace AdbcDrivers.HiveServer2.TestServer
         /// </summary>
         public TStatus OpenSessionStatus { get; set; } = new(TStatusCode.SUCCESS_STATUS);
 
+        /// <summary>
+        /// Optional hook invoked on the server thread when <c>OpenSession</c> arrives,
+        /// before the response is built. Lets a test observe or delay session opening.
+        /// </summary>
+        public Action<TOpenSessionReq>? OnOpenSession { get; set; }
+
+        /// <summary>Optional hook invoked when <c>CloseSession</c> arrives.</summary>
+        public Action<TCloseSessionReq>? OnCloseSession { get; set; }
+
         // Per-RPC result generators. Defaults give the same behavior as the
         // original stub: ExecuteStatement returns a one-row BIGINT, every
         // metadata RPC returns an empty result with the schema the driver
@@ -82,6 +91,7 @@ namespace AdbcDrivers.HiveServer2.TestServer
 
         public Task<TOpenSessionResp> OpenSession(TOpenSessionReq req, CancellationToken cancellationToken = default)
         {
+            OnOpenSession?.Invoke(req);
             var resp = new TOpenSessionResp(OpenSessionStatus, req.Client_protocol);
             if (OpenSessionStatus.StatusCode == TStatusCode.SUCCESS_STATUS)
             {
@@ -90,8 +100,11 @@ namespace AdbcDrivers.HiveServer2.TestServer
             return Task.FromResult(resp);
         }
 
-        public Task<TCloseSessionResp> CloseSession(TCloseSessionReq req, CancellationToken cancellationToken = default) =>
-            Task.FromResult(new TCloseSessionResp(Ok()));
+        public Task<TCloseSessionResp> CloseSession(TCloseSessionReq req, CancellationToken cancellationToken = default)
+        {
+            OnCloseSession?.Invoke(req);
+            return Task.FromResult(new TCloseSessionResp(Ok()));
+        }
 
         public Task<TGetInfoResp> GetInfo(TGetInfoReq req, CancellationToken cancellationToken = default)
         {

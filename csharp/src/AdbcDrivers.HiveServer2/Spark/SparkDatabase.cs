@@ -20,33 +20,19 @@
  * limitations under the License.
  */
 
-using System;
 using System.Collections.Generic;
-using System.Linq;
-using Apache.Arrow.Adbc;
+using AdbcDrivers.HiveServer2.Hive2;
 
 namespace AdbcDrivers.HiveServer2.Spark
 {
-    internal class SparkDatabase : AdbcDatabase
+    internal class SparkDatabase : HiveServer2DatabaseBase
     {
-        readonly IReadOnlyDictionary<string, string> properties;
-
         internal SparkDatabase(IReadOnlyDictionary<string, string> properties)
+            : base(properties)
         {
-            this.properties = properties;
         }
 
-        public override AdbcConnection Connect(IReadOnlyDictionary<string, string>? options)
-        {
-            // connection options takes precedence over database properties for the same option
-            IReadOnlyDictionary<string, string> mergedProperties = options == null
-                ? properties
-                : options
-                    .Concat(properties.Where(x => !options.Keys.Contains(x.Key, StringComparer.OrdinalIgnoreCase)))
-                    .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-            SparkConnection connection = SparkConnectionFactory.NewConnection(mergedProperties); // new SparkConnection(mergedProperties);
-            connection.OpenAsync().ConfigureAwait(false).GetAwaiter().GetResult();
-            return connection;
-        }
+        protected override HiveServer2Connection NewConnection(IReadOnlyDictionary<string, string> properties) =>
+            SparkConnectionFactory.NewConnection(properties);
     }
 }

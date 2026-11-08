@@ -373,22 +373,28 @@ namespace AdbcDrivers.HiveServer2.Hive2
 
         internal IReadOnlyDictionary<string, string> Properties { get; }
 
-        internal async Task OpenAsync()
+        /// <summary>
+        /// Opens the transport and the HiveServer2 session. Bounded by
+        /// <see cref="ConnectTimeoutMilliseconds"/> and by <paramref name="cancellationToken"/>;
+        /// caller cancellation surfaces as <see cref="OperationCanceledException"/> and the
+        /// timeout as <see cref="TimeoutException"/>.
+        /// </summary>
+        internal async Task OpenAsync(CancellationToken cancellationToken = default)
         {
             await this.TraceActivityAsync(async activity =>
             {
-                CancellationToken cancellationToken = ApacheUtility.GetCancellationToken(ConnectTimeoutMilliseconds, ApacheUtility.TimeUnit.Milliseconds);
+                using TimeoutOrCallerTokenSource cts = ApacheUtility.GetTimeoutOrCallerTokenSource(ConnectTimeoutMilliseconds, ApacheUtility.TimeUnit.Milliseconds, cancellationToken);
                 try
                 {
                     TTransport transport = CreateTransport();
-                    TProtocol protocol = await CreateProtocolAsync(transport, cancellationToken).ConfigureAwait(false);
+                    TProtocol protocol = await CreateProtocolAsync(transport, cts.Token).ConfigureAwait(false);
                     _transport = protocol.Transport;
                     _client = CreateTCLIServiceClient(protocol);
                     TOpenSessionReq request = CreateSessionRequest();
                     TOpenSessionResp? session = null;
                     try
                     {
-                        session = await Client.OpenSession(request, cancellationToken).ConfigureAwait(false);
+                        session = await Client.OpenSession(request, cts.Token).ConfigureAwait(false);
                     }
                     catch (TTransportException transportEx)
                         when (ApacheUtility.ContainsException(transportEx, out HttpRequestException? httpEx) && IsUnauthorized(httpEx!))
@@ -396,24 +402,20 @@ namespace AdbcDrivers.HiveServer2.Hive2
                         ErrorKindClassifier.Tag(activity, HiveServer2.ActivityKeys.Db.ErrorKindValues.AuthFailed);
                         throw new HiveServer2Exception(transportEx.Message, AdbcStatusCode.Unauthorized, transportEx);
                     }
-                    catch (Exception)
+                    // A cancelled or timed-out attempt says nothing about protocol support, so
+                    // only fall back to older protocol versions when the token is still live.
+                    catch (Exception) when (!cts.Token.IsCancellationRequested && FallbackProtocolVersions.Any())
                     {
-                        if (FallbackProtocolVersions.Any())
-                        {
-                            session = await TryOpenSessionWithFallbackAsync(request, cancellationToken).ConfigureAwait(false);
-                        }
-                        else
-                        {
-                            throw;
-                        }
+                        session = await TryOpenSessionWithFallbackAsync(request, cts.Token).ConfigureAwait(false);
                     }
                     await HandleOpenSessionResponse(session, activity).ConfigureAwait(false);
                 }
-                catch (Exception ex) when (ExceptionHelper.IsOperationCanceledOrCancellationRequested(ex, cancellationToken))
+                catch (Exception ex) when (IsCancelledByCaller(ex, cts))
                 {
-                    // The CTS in scope was created from ConnectTimeoutMilliseconds
-                    // via ApacheUtility.GetCancellationToken — a CancelAfter timer
-                    // is the only thing that can fire it here, so this is a timeout.
+                    throw new OperationCanceledException("Opening the session was cancelled.", ex, cancellationToken);
+                }
+                catch (Exception ex) when (ExceptionHelper.IsOperationCanceledOrCancellationRequested(ex, cts.Token))
+                {
                     ErrorKindClassifier.Tag(activity, HiveServer2.ActivityKeys.Db.ErrorKindValues.QueryTimeout);
                     throw new TimeoutException("The operation timed out while attempting to open a session. Please try increasing connect timeout.", ex);
                 }
@@ -457,8 +459,8 @@ namespace AdbcDrivers.HiveServer2.Hive2
                 }
                 catch (Exception ex) when (ExceptionHelper.IsOperationCanceledOrCancellationRequested(ex, cancellationToken))
                 {
-                    ErrorKindClassifier.Tag(Activity.Current, HiveServer2.ActivityKeys.Db.ErrorKindValues.QueryTimeout);
-                    throw new TimeoutException("The operation timed out while attempting to open a session. Please try increasing connect timeout.", ex);
+                    // Let OpenAsync classify it as a timeout or a caller cancellation.
+                    throw;
                 }
                 catch (TTransportException transportEx)
                     when (ApacheUtility.ContainsException(transportEx, out HttpRequestException? httpEx) && IsUnauthorized(httpEx!))

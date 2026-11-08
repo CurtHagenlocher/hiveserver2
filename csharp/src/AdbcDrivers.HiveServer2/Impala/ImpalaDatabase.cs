@@ -20,32 +20,19 @@
  * limitations under the License.
  */
 
-using System;
 using System.Collections.Generic;
-using System.Linq;
-using Apache.Arrow.Adbc;
+using AdbcDrivers.HiveServer2.Hive2;
 
 namespace AdbcDrivers.HiveServer2.Impala
 {
-    internal class ImpalaDatabase : AdbcDatabase
+    internal class ImpalaDatabase : HiveServer2DatabaseBase
     {
-        readonly IReadOnlyDictionary<string, string> properties;
-
         internal ImpalaDatabase(IReadOnlyDictionary<string, string> properties)
+            : base(properties)
         {
-            this.properties = properties;
         }
 
-        public override AdbcConnection Connect(IReadOnlyDictionary<string, string>? options)
-        {
-            IReadOnlyDictionary<string, string> mergedProperties = options == null
-                ? properties
-                : options
-                    .Concat(properties.Where(x => !options.Keys.Contains(x.Key, StringComparer.OrdinalIgnoreCase)))
-                    .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
-            ImpalaConnection connection = ImpalaConnectionFactory.NewConnection(mergedProperties);
-            connection.OpenAsync().ConfigureAwait(false).GetAwaiter().GetResult();
-            return connection;
-        }
+        protected override HiveServer2Connection NewConnection(IReadOnlyDictionary<string, string> properties) =>
+            ImpalaConnectionFactory.NewConnection(properties);
     }
 }

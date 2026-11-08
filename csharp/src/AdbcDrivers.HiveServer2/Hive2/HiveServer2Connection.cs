@@ -537,6 +537,21 @@ namespace AdbcDrivers.HiveServer2.Hive2
 
         protected internal int ConnectTimeoutMilliseconds { get; set; } = ConnectTimeoutMillisecondsDefault;
 
+        /// <summary>
+        /// Reads the connect timeout from <paramref name="parameterName"/>, if present, into
+        /// <see cref="ConnectTimeoutMilliseconds"/>. Shared by every transport so the option
+        /// behaves the same over HTTP and Standard (TCP).
+        /// </summary>
+        protected void ParseConnectTimeoutOption(string parameterName)
+        {
+            if (Properties.TryGetValue(parameterName, out string? connectTimeoutMs) && connectTimeoutMs != null)
+            {
+                ConnectTimeoutMilliseconds = int.TryParse(connectTimeoutMs, NumberStyles.Integer, CultureInfo.InvariantCulture, out int connectTimeoutMsValue) && connectTimeoutMsValue >= 0
+                    ? connectTimeoutMsValue
+                    : throw new ArgumentOutOfRangeException(parameterName, connectTimeoutMs, $"must be a value of 0 (infinite) or between 1 .. {int.MaxValue}. default is 30000 milliseconds.");
+            }
+        }
+
         protected abstract TTransport CreateTransport();
 
         protected abstract Task<TProtocol> CreateProtocolAsync(TTransport transport, CancellationToken cancellationToken = default);

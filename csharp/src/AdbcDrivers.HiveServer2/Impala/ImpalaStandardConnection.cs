@@ -106,6 +106,7 @@ namespace AdbcDrivers.HiveServer2.Impala
         {
             Properties.TryGetValue(ImpalaParameters.DataTypeConv, out string? dataTypeConv);
             DataTypeConversion = DataTypeConversionParser.Parse(dataTypeConv);
+            ParseConnectTimeoutOption(ImpalaParameters.ConnectTimeoutMilliseconds);
             TlsOptions = HiveServer2TlsImpl.GetStandardTlsOptions(Properties);
         }
 

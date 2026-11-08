@@ -240,6 +240,7 @@ namespace AdbcDrivers.HiveServer2.Spark
         {
             Properties.TryGetValue(SparkParameters.DataTypeConv, out string? dataTypeConv);
             DataTypeConversion = DataTypeConversionParser.Parse(dataTypeConv);
+            ParseConnectTimeoutOption(SparkParameters.ConnectTimeoutMilliseconds);
             TlsOptions = HiveServer2TlsImpl.GetStandardTlsOptions(Properties);
         }
 

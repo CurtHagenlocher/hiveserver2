@@ -98,6 +98,7 @@ namespace AdbcDrivers.HiveServer2.Hive2
         {
             Properties.TryGetValue(HiveServer2Parameters.DataTypeConv, out string? dataTypeConv);
             DataTypeConversion = DataTypeConversionParser.Parse(dataTypeConv);
+            ParseConnectTimeoutOption(HiveServer2Parameters.ConnectTimeoutMilliseconds);
             TlsOptions = HiveServer2TlsImpl.GetStandardTlsOptions(Properties);
         }
 

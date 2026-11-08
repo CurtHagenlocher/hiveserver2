@@ -125,13 +125,7 @@ namespace AdbcDrivers.HiveServer2.Impala
         {
             Properties.TryGetValue(ImpalaParameters.DataTypeConv, out string? dataTypeConv);
             DataTypeConversion = DataTypeConversionParser.Parse(dataTypeConv);
-            Properties.TryGetValue(ImpalaParameters.ConnectTimeoutMilliseconds, out string? connectTimeoutMs);
-            if (connectTimeoutMs != null)
-            {
-                ConnectTimeoutMilliseconds = int.TryParse(connectTimeoutMs, NumberStyles.Integer, CultureInfo.InvariantCulture, out int connectTimeoutMsValue) && connectTimeoutMsValue >= 0
-                    ? connectTimeoutMsValue
-                    : throw new ArgumentOutOfRangeException(ImpalaParameters.ConnectTimeoutMilliseconds, connectTimeoutMs, $"must be a value of 0 (infinite) or between 1 .. {int.MaxValue}. default is 30000 milliseconds.");
-            }
+            ParseConnectTimeoutOption(ImpalaParameters.ConnectTimeoutMilliseconds);
             TlsOptions = HiveServer2TlsImpl.GetHttpTlsOptions(Properties);
         }
 

@@ -148,6 +148,116 @@ namespace AdbcDrivers.Tests.HiveServer2.Hive2.MockServer
             Assert.NotNull(tableTypes);
         }
 
+        [Fact]
+        public async Task Standard_CallerCancellation_InterruptsSaslHandshake()
+        {
+            using var server = new RawSaslServer(respondWithError: false);
+            using AdbcDatabase database = new HiveServer2Driver().Open(server.Parameters);
+
+            using var cts = new CancellationTokenSource();
+            Task<AdbcConnection> connect = database.ConnectAsync(server.Parameters, cts.Token);
+            Assert.True(await server.WaitForHandshakeAsync(), "The server never received the SASL handshake.");
+            cts.Cancel();
+
+            Assert.Same(connect, await Task.WhenAny(connect, Task.Delay(s_waitLimit)));
+            OperationCanceledException ex = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => connect);
+            Assert.Equal(cts.Token, ex.CancellationToken);
+            Assert.True(await server.WaitForClientCloseAsync(), "The driver left the socket open after cancellation.");
+        }
+
+        [Fact]
+        public async Task Standard_ConnectTimeout_DuringSaslHandshake_IsReportedAsTimeout()
+        {
+            using var server = new RawSaslServer(respondWithError: false);
+            var parameters = MockServerScenario.CopyParameters(server.Parameters);
+            parameters[HiveServer2Parameters.ConnectTimeoutMilliseconds] = "500";
+            using AdbcDatabase database = new HiveServer2Driver().Open(parameters);
+
+            using var cts = new CancellationTokenSource();
+            Task<AdbcConnection> connect = database.ConnectAsync(parameters, cts.Token);
+
+            Assert.Same(connect, await Task.WhenAny(connect, Task.Delay(s_waitLimit)));
+            await Assert.ThrowsAsync<TimeoutException>(() => connect);
+            Assert.True(await server.WaitForClientCloseAsync(), "The driver left the socket open after the timeout.");
+        }
+
+        [Fact]
+        public async Task Standard_SaslFailure_ClosesSocket()
+        {
+            using var server = new RawSaslServer(respondWithError: true);
+            using AdbcDatabase database = new HiveServer2Driver().Open(server.Parameters);
+
+            Task<AdbcConnection> connect = database.ConnectAsync(server.Parameters);
+            Assert.Same(connect, await Task.WhenAny(connect, Task.Delay(s_waitLimit)));
+            await Assert.ThrowsAnyAsync<Exception>(() => connect);
+            Assert.True(await server.WaitForClientCloseAsync(), "The driver left the socket open after SASL negotiation failed.");
+        }
+
+        /// <summary>
+        /// A TCP server that accepts one connection and either never answers the SASL
+        /// handshake or answers it with an error, and reports when the client closes the socket.
+        /// </summary>
+        private sealed class RawSaslServer : IDisposable
+        {
+            private const byte SaslStatusError = 0x04;
+
+            private readonly System.Net.Sockets.TcpListener _listener;
+            private readonly bool _respondWithError;
+            private readonly TaskCompletionSource<bool> _handshakeReceived = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            private readonly TaskCompletionSource<bool> _clientClosed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            private System.Net.Sockets.TcpClient? _client;
+
+            public RawSaslServer(bool respondWithError)
+            {
+                _respondWithError = respondWithError;
+                _listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+                _listener.Start();
+                int port = ((System.Net.IPEndPoint)_listener.LocalEndpoint).Port;
+                var parameters = MockServerScenario.CopyParameters(HiveMockServer.DefaultStandardParameters);
+                parameters[HiveServer2Parameters.HostName] = "127.0.0.1";
+                parameters[HiveServer2Parameters.Port] = port.ToString(CultureInfo.InvariantCulture);
+                Parameters = parameters;
+                _ = Task.Run(ServeAsync);
+            }
+
+            public IReadOnlyDictionary<string, string> Parameters { get; }
+
+            public async Task<bool> WaitForHandshakeAsync() =>
+                await Task.WhenAny(_handshakeReceived.Task, Task.Delay(s_waitLimit)) == _handshakeReceived.Task;
+
+            public async Task<bool> WaitForClientCloseAsync() =>
+                await Task.WhenAny(_clientClosed.Task, Task.Delay(s_waitLimit)) == _clientClosed.Task;
+
+            private async Task ServeAsync()
+            {
+                try
+                {
+                    _client = await _listener.AcceptTcpClientAsync().ConfigureAwait(false);
+                    var stream = _client.GetStream();
+                    byte[] buffer = new byte[1024];
+                    while (await stream.ReadAsync(buffer, 0, buffer.Length).ConfigureAwait(false) > 0)
+                    {
+                        if (_handshakeReceived.TrySetResult(true) && _respondWithError)
+                        {
+                            byte[] error = { SaslStatusError, 0, 0, 0, 0 };
+                            await stream.WriteAsync(error, 0, error.Length).ConfigureAwait(false);
+                        }
+                    }
+                }
+                catch (Exception)
+                {
+                    // A reset connection counts as closed too.
+                }
+                _clientClosed.TrySetResult(true);
+            }
+
+            public void Dispose()
+            {
+                _listener.Stop();
+                _client?.Dispose();
+            }
+        }
+
         /// <summary>An in-process server of either transport plus matching driver parameters.</summary>
         private sealed class TestServer : IDisposable
         {

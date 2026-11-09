@@ -386,8 +386,7 @@ namespace AdbcDrivers.HiveServer2.Hive2
                 using TimeoutOrCallerTokenSource cts = ApacheUtility.GetTimeoutOrCallerTokenSource(ConnectTimeoutMilliseconds, ApacheUtility.TimeUnit.Milliseconds, cancellationToken);
                 try
                 {
-                    TTransport transport = CreateTransport();
-                    TProtocol protocol = await CreateProtocolAsync(transport, cts.Token).ConfigureAwait(false);
+                    TProtocol protocol = await OpenProtocolAsync(cts.Token).ConfigureAwait(false);
                     _transport = protocol.Transport;
                     _client = CreateTCLIServiceClient(protocol);
                     TOpenSessionReq request = CreateSessionRequest();
@@ -447,8 +446,7 @@ namespace AdbcDrivers.HiveServer2.Hive2
                 {
                     ResetConnection();
                     // Recreate transport + client
-                    var retryTransport = CreateTransport();
-                    var retryProtocol = await CreateProtocolAsync(retryTransport, cancellationToken).ConfigureAwait(false);
+                    var retryProtocol = await OpenProtocolAsync(cancellationToken).ConfigureAwait(false);
                     _transport = retryProtocol.Transport;
                     _client = CreateTCLIServiceClient(retryProtocol);
                     // New request with fallback version
@@ -481,6 +479,50 @@ namespace AdbcDrivers.HiveServer2.Hive2
             }
             ErrorKindClassifier.Tag(Activity.Current, HiveServer2.ActivityKeys.Db.ErrorKindValues.ServerError);
             throw new HiveServer2Exception("Error occurred while opening the session. All protocol fallback attempts failed.");
+        }
+
+        /// <summary>
+        /// Creates and opens a new transport (socket connect, TLS and SASL handshakes).
+        /// Cancelling <paramref name="cancellationToken"/> closes the transport, because a
+        /// pending socket or TLS read on .NET Framework ignores the token once it has started.
+        /// On any failure the transport is disposed rather than leaked.
+        /// </summary>
+        private async Task<TProtocol> OpenProtocolAsync(CancellationToken cancellationToken)
+        {
+            TTransport transport = CreateTransport();
+            try
+            {
+                using (cancellationToken.Register(static state => CloseQuietly((TTransport)state!), transport))
+                {
+                    TProtocol protocol = await CreateProtocolAsync(transport, cancellationToken).ConfigureAwait(false);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    return protocol;
+                }
+            }
+            catch (Exception ex)
+            {
+                transport.Dispose();
+                if (cancellationToken.IsCancellationRequested && ex is not OperationCanceledException)
+                {
+                    // Closing the transport surfaces as ObjectDisposedException, IOException or
+                    // similar; report it as the cancellation it is so OpenAsync can tell a
+                    // timeout from a caller cancellation.
+                    throw new OperationCanceledException("Opening the transport was cancelled.", ex, cancellationToken);
+                }
+                throw;
+            }
+        }
+
+        private static void CloseQuietly(TTransport transport)
+        {
+            try
+            {
+                transport.Close();
+            }
+            catch
+            {
+                // Best effort: this only exists to unblock a pending read.
+            }
         }
 
         private void ResetConnection()

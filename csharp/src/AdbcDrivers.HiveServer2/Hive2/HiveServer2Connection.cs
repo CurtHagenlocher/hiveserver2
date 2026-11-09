@@ -1373,7 +1373,7 @@ namespace AdbcDrivers.HiveServer2.Hive2
                 case (int)ColumnTypeId.LONGNVARCHAR:
                     return StringType.Default;
                 case (int)ColumnTypeId.TIMESTAMP:
-                    return new TimestampType(TimeUnit.Microsecond, timezone: (string?)null);
+                    return HiveServer2SchemaParser.s_timestampType;
                 case (int)ColumnTypeId.BINARY:
                 case (int)ColumnTypeId.VARBINARY:
                 case (int)ColumnTypeId.LONGVARBINARY:

@@ -29,6 +29,8 @@ namespace AdbcDrivers.HiveServer2.Hive2
 {
     internal class HiveServer2SchemaParser : SchemaParser
     {
+        internal static readonly TimestampType s_timestampType = new(TimeUnit.Microsecond, timezone: (string?)null);
+
         public override IArrowType GetArrowType(TPrimitiveTypeEntry thriftType, DataTypeConversion dataTypeConversion)
         {
             bool convertScalar = dataTypeConversion.HasFlag(DataTypeConversion.Scalar);
@@ -44,7 +46,7 @@ namespace AdbcDrivers.HiveServer2.Hive2
                 TTypeId.TINYINT_TYPE => Int8Type.Default,
                 TTypeId.DATE_TYPE => convertScalar ? Date32Type.Default : StringType.Default,
                 TTypeId.DECIMAL_TYPE => convertScalar ? NewDecima128Type(thriftType) : StringType.Default,
-                TTypeId.TIMESTAMP_TYPE => convertScalar ? TimestampType.Default : StringType.Default,
+                TTypeId.TIMESTAMP_TYPE => convertScalar ? s_timestampType : StringType.Default,
                 TTypeId.CHAR_TYPE
                 or TTypeId.NULL_TYPE
                 or TTypeId.STRING_TYPE

@@ -293,17 +293,36 @@ namespace AdbcDrivers.Tests.HiveServer2.Hive2.MockServer
                 });
 
         [Fact]
-        public Task TimestampColumn_ConvertsToTimestampArray() =>
-            RunAsync(MockResult.Builder().Timestamp("t",
-                new DateTime(2024, 6, 1, 12, 34, 56),
+        public async Task TimestampColumn_ConvertsToTimestampArray()
+        {
+            var value = new DateTime(2024, 6, 1, 12, 34, 56).AddTicks(1234560);
+            using var scenario = HiveMockServer.Create();
+            scenario.Stub.OnExecuteStatement = _ => MockResult.Builder().Timestamp("t",
+                value,
                 new DateTime(1999, 12, 31, 23, 59, 59),
-                null).Build(),
-                (TimestampArray c) =>
-                {
-                    Assert.Equal(new DateTimeOffset(2024, 6, 1, 12, 34, 56, TimeSpan.Zero), c.GetTimestamp(0));
-                    Assert.Equal(new DateTimeOffset(1999, 12, 31, 23, 59, 59, TimeSpan.Zero), c.GetTimestamp(1));
-                    Assert.True(c.IsNull(2));
-                });
+                null).Build();
+
+            using var statement = scenario.NewStatement();
+            statement.SqlQuery = "SELECT t FROM t";
+            QueryResult result = await statement.ExecuteQueryAsync();
+            using IArrowArrayStream stream = result.Stream!;
+            var streamType = Assert.IsType<TimestampType>(stream.Schema.FieldsList[0].DataType);
+            Assert.Equal(TimeUnit.Microsecond, streamType.Unit);
+            Assert.Null(streamType.Timezone);
+
+            using RecordBatch batch = await stream.ReadNextRecordBatchAsync();
+            Assert.NotNull(batch);
+            var batchType = Assert.IsType<TimestampType>(batch.Schema.FieldsList[0].DataType);
+            var column = Assert.IsType<TimestampArray>(batch.Column(0));
+            var arrayType = Assert.IsType<TimestampType>(column.Data.DataType);
+            Assert.Equal(streamType.Unit, batchType.Unit);
+            Assert.Equal(streamType.Timezone, batchType.Timezone);
+            Assert.Equal(batchType.Unit, arrayType.Unit);
+            Assert.Equal(batchType.Timezone, arrayType.Timezone);
+            Assert.Equal(new DateTimeOffset(value, TimeSpan.Zero), column.GetTimestamp(0));
+            Assert.Equal(new DateTimeOffset(1999, 12, 31, 23, 59, 59, TimeSpan.Zero), column.GetTimestamp(1));
+            Assert.True(column.IsNull(2));
+        }
 
         [Fact]
         public Task DecimalColumn_ConvertsToDecimal128Array() =>

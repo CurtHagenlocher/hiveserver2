@@ -551,16 +551,25 @@ namespace AdbcDrivers.HiveServer2.Hive2
             IResponse response,
             TGetResultSetMetadataResp? metadataResp = null) where T : IHiveServer2Statement;
 
-        public override IArrowArrayStream GetObjects(GetObjectsDepth depth, string? catalogPattern, string? dbSchemaPattern, string? tableNamePattern, IReadOnlyList<string>? tableTypes, string? columnNamePattern)
+        // The synchronous metadata methods block on their async counterparts (rather than the
+        // other way around, which is the AdbcConnection default) so that the Thrift calls run
+        // asynchronously end-to-end for async callers, and so that a subclass only needs to
+        // override the async method to change both code paths.
+
+        public override IArrowArrayStream GetObjects(GetObjectsDepth depth, string? catalogPattern, string? dbSchemaPattern, string? tableNamePattern, IReadOnlyList<string>? tableTypes, string? columnNamePattern) =>
+            GetObjectsAsync(depth, catalogPattern, dbSchemaPattern, tableNamePattern, tableTypes, columnNamePattern, CancellationToken.None)
+                .ConfigureAwait(false).GetAwaiter().GetResult();
+
+        public override async Task<IArrowArrayStream> GetObjectsAsync(GetObjectsDepth depth, string? catalogPattern, string? dbSchemaPattern, string? tableNamePattern, IReadOnlyList<string>? tableTypes, string? columnNamePattern, CancellationToken cancellationToken = default)
         {
-            var result = this.TraceActivityAsync(async _ =>
+            return await this.TraceActivityAsync(async _ =>
             {
                 if (SessionHandle == null)
                 {
                     throw new InvalidOperationException("Invalid session");
                 }
 
-                CancellationToken cancellationToken = ApacheUtility.GetCancellationToken(QueryTimeoutSeconds, ApacheUtility.TimeUnit.Seconds);
+                using TimeoutOrCallerTokenSource cts = ApacheUtility.GetTimeoutOrCallerTokenSource(QueryTimeoutSeconds, ApacheUtility.TimeUnit.Seconds, cancellationToken);
                 try
                 {
                     if (GetObjectsPatternsRequireLowerCase)
@@ -574,9 +583,13 @@ namespace AdbcDrivers.HiveServer2.Hive2
                     return await GetObjectsResultBuilder.BuildGetObjectsResultAsync(
                         this, depth, catalogPattern, dbSchemaPattern,
                         tableNamePattern, tableTypes, columnNamePattern,
-                        cancellationToken).ConfigureAwait(false);
+                        cts.Token).ConfigureAwait(false);
                 }
-                catch (Exception ex) when (ExceptionHelper.IsOperationCanceledOrCancellationRequested(ex, cancellationToken))
+                catch (Exception ex) when (IsCancelledByCaller(ex, cts))
+                {
+                    throw MetadataQueryCancelled(ex, cancellationToken);
+                }
+                catch (Exception ex) when (ExceptionHelper.IsOperationCanceledOrCancellationRequested(ex, cts.Token))
                 {
                     ErrorKindClassifier.Tag(Activity.Current, HiveServer2.ActivityKeys.Db.ErrorKindValues.QueryTimeout);
                     throw new TimeoutException("The metadata query execution timed out. Consider increasing the query timeout value.", ex);
@@ -587,8 +600,19 @@ namespace AdbcDrivers.HiveServer2.Hive2
                     throw new HiveServer2Exception($"An unexpected error occurred while running metadata query. '{ApacheUtility.FormatExceptionMessage(ex)}'", ex);
                 }
             }, ClassName + "." + nameof(GetObjects)).ConfigureAwait(false);
-            return result.GetAwaiter().GetResult();
         }
+
+        /// <summary>
+        /// True when a metadata call failed because the caller's token was cancelled, as
+        /// opposed to the driver's own <see cref="QueryTimeoutSeconds"/> timer firing.
+        /// Uses the cause recorded by <paramref name="cts"/> rather than the caller token's
+        /// current state, so a cancel that arrives after the timeout is not misreported.
+        /// </summary>
+        private static bool IsCancelledByCaller(Exception ex, TimeoutOrCallerTokenSource cts) =>
+            cts.IsCancelledByCaller && ExceptionHelper.IsOperationCanceledOrCancellationRequested(ex, cts.Token);
+
+        private static OperationCanceledException MetadataQueryCancelled(Exception ex, CancellationToken callerToken) =>
+            new OperationCanceledException("The metadata query was cancelled.", ex, callerToken);
 
         // IGetObjectsDataProvider implementation
 
@@ -734,9 +758,12 @@ namespace AdbcDrivers.HiveServer2.Hive2
             }
         }
 
-        public override IArrowArrayStream GetTableTypes()
+        public override IArrowArrayStream GetTableTypes() =>
+            GetTableTypesAsync(CancellationToken.None).ConfigureAwait(false).GetAwaiter().GetResult();
+
+        public override async Task<IArrowArrayStream> GetTableTypesAsync(CancellationToken cancellationToken = default)
         {
-            var result = this.TraceActivityAsync(async activity =>
+            return await this.TraceActivityAsync(async activity =>
             {
                 TGetTableTypesReq req = new()
                 {
@@ -744,13 +771,13 @@ namespace AdbcDrivers.HiveServer2.Hive2
                 };
                 TrySetGetDirectResults(req);
 
-                CancellationToken cancellationToken = ApacheUtility.GetCancellationToken(QueryTimeoutSeconds, ApacheUtility.TimeUnit.Seconds);
+                using TimeoutOrCallerTokenSource cts = ApacheUtility.GetTimeoutOrCallerTokenSource(QueryTimeoutSeconds, ApacheUtility.TimeUnit.Seconds, cancellationToken);
                 try
                 {
-                    TGetTableTypesResp resp = await Client.GetTableTypes(req, cancellationToken).ConfigureAwait(false);
+                    TGetTableTypesResp resp = await Client.GetTableTypes(req, cts.Token).ConfigureAwait(false);
                     HandleThriftResponse(resp.Status, activity);
 
-                    TRowSet rowSet = await GetRowSetAsync(resp, cancellationToken).ConfigureAwait(false);
+                    TRowSet rowSet = await GetRowSetAsync(resp, cts.Token).ConfigureAwait(false);
                     StringArray tableTypes = rowSet.Columns[0].StringVal.Values;
 
                     HashSet<string> distinctTableTypes = new HashSet<string>(tableTypes);
@@ -763,9 +790,13 @@ namespace AdbcDrivers.HiveServer2.Hive2
                         tableTypesBuilder.Build()
                     };
 
-                    return new HiveInfoArrowStream(StandardSchemas.TableTypesSchema, dataArrays);
+                    return (IArrowArrayStream)new HiveInfoArrowStream(StandardSchemas.TableTypesSchema, dataArrays);
                 }
-                catch (Exception ex) when (ExceptionHelper.IsOperationCanceledOrCancellationRequested(ex, cancellationToken))
+                catch (Exception ex) when (IsCancelledByCaller(ex, cts))
+                {
+                    throw MetadataQueryCancelled(ex, cancellationToken);
+                }
+                catch (Exception ex) when (ExceptionHelper.IsOperationCanceledOrCancellationRequested(ex, cts.Token))
                 {
                     ErrorKindClassifier.Tag(Activity.Current, HiveServer2.ActivityKeys.Db.ErrorKindValues.QueryTimeout);
                     throw new TimeoutException("The metadata query execution timed out. Consider increasing the query timeout value.", ex);
@@ -776,7 +807,6 @@ namespace AdbcDrivers.HiveServer2.Hive2
                     throw new HiveServer2Exception($"An unexpected error occurred while running metadata query. '{ApacheUtility.FormatExceptionMessage(ex)}'", ex);
                 }
             }, ClassName + "." + nameof(GetTableTypes)).ConfigureAwait(false);
-            return result.GetAwaiter().GetResult();
         }
 
         internal async Task PollForResponseAsync(TOperationHandle operationHandle, TCLIService.IAsync client, int pollTimeMilliseconds, CancellationToken cancellationToken = default)
@@ -1251,9 +1281,12 @@ namespace AdbcDrivers.HiveServer2.Hive2
 
         internal abstract void SetPrecisionScaleAndTypeName(short columnType, string typeName, TableInfo? tableInfo, int columnSize, int decimalDigits);
 
-        public override Schema GetTableSchema(string? catalog, string? dbSchema, string? tableName)
+        public override Schema GetTableSchema(string? catalog, string? dbSchema, string? tableName) =>
+            GetTableSchemaAsync(catalog, dbSchema, tableName, CancellationToken.None).ConfigureAwait(false).GetAwaiter().GetResult();
+
+        public override async Task<Schema> GetTableSchemaAsync(string? catalog, string? dbSchema, string? tableName, CancellationToken cancellationToken = default)
         {
-            var result = this.TraceActivityAsync(async activity =>
+            return await this.TraceActivityAsync(async activity =>
             {
                 if (SessionHandle == null)
                 {
@@ -1266,13 +1299,13 @@ namespace AdbcDrivers.HiveServer2.Hive2
                 getColumnsReq.TableName = tableName;
                 TrySetGetDirectResults(getColumnsReq);
 
-                CancellationToken cancellationToken = ApacheUtility.GetCancellationToken(QueryTimeoutSeconds, ApacheUtility.TimeUnit.Seconds);
+                using TimeoutOrCallerTokenSource cts = ApacheUtility.GetTimeoutOrCallerTokenSource(QueryTimeoutSeconds, ApacheUtility.TimeUnit.Seconds, cancellationToken);
                 try
                 {
-                    var columnsResponse = await Client.GetColumns(getColumnsReq, cancellationToken).ConfigureAwait(false);
+                    var columnsResponse = await Client.GetColumns(getColumnsReq, cts.Token).ConfigureAwait(false);
                     HandleThriftResponse(columnsResponse.Status, activity);
 
-                    TRowSet rowSet = await GetRowSetAsync(columnsResponse, cancellationToken).ConfigureAwait(false);
+                    TRowSet rowSet = await GetRowSetAsync(columnsResponse, cts.Token).ConfigureAwait(false);
                     List<TColumn> columns = rowSet.Columns;
                     int rowCount = rowSet.Columns[3].StringVal.Values.Length;
 
@@ -1292,7 +1325,11 @@ namespace AdbcDrivers.HiveServer2.Hive2
                     }
                     return new Schema(fields, null);
                 }
-                catch (Exception ex) when (ExceptionHelper.IsOperationCanceledOrCancellationRequested(ex, cancellationToken))
+                catch (Exception ex) when (IsCancelledByCaller(ex, cts))
+                {
+                    throw MetadataQueryCancelled(ex, cancellationToken);
+                }
+                catch (Exception ex) when (ExceptionHelper.IsOperationCanceledOrCancellationRequested(ex, cts.Token))
                 {
                     ErrorKindClassifier.Tag(Activity.Current, HiveServer2.ActivityKeys.Db.ErrorKindValues.QueryTimeout);
                     throw new TimeoutException("The metadata query execution timed out. Consider increasing the query timeout value.", ex);
@@ -1303,7 +1340,6 @@ namespace AdbcDrivers.HiveServer2.Hive2
                     throw new HiveServer2Exception($"An unexpected error occurred while running metadata query. '{ApacheUtility.FormatExceptionMessage(ex)}'", ex);
                 }
             }, ClassName + "." + nameof(GetTableSchema)).ConfigureAwait(false);
-            return result.GetAwaiter().GetResult();
         }
 
         /// <summary>

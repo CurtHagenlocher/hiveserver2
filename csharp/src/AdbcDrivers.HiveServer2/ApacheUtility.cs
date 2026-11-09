@@ -45,6 +45,14 @@ namespace AdbcDrivers.HiveServer2
             return new CancellationTokenSource(timeSpan);
         }
 
+        /// <summary>
+        /// Creates a token source that is cancelled either when <paramref name="timeout"/>
+        /// elapses or when <paramref name="callerToken"/> is cancelled, and that records
+        /// which of the two happened first.
+        /// </summary>
+        public static TimeoutOrCallerTokenSource GetTimeoutOrCallerTokenSource(int timeout, TimeUnit timeUnit, CancellationToken callerToken) =>
+            new TimeoutOrCallerTokenSource(CalculateTimeSpan(timeout, timeUnit), callerToken);
+
         public static CancellationToken GetCancellationToken(int timeout, TimeUnit timeUnit)
         {
             TimeSpan timeSpan = CalculateTimeSpan(timeout, timeUnit);

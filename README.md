@@ -23,6 +23,31 @@ HiveServer2-based servers (Hive, Impala, and Spark), implemented in C# language.
 
 At this time pre-packaged drivers are not yet available. See [Building](#building) for instructions on building from source.
 
+## Native API
+
+The NativeAOT shared library (`adbc_driver_hiveserver2.dll`,
+`adbc_driver_hiveserver2.so`, or `adbc_driver_hiveserver2.dylib`) contains all
+three drivers. Select the appropriate initialization entry point when loading it:
+
+| Server | Entry point |
+| ------ | ----------- |
+| HiveServer2 | `AdbcDriverHiveServer2Init` |
+| Impala | `AdbcDriverImpalaInit` |
+| Spark | `AdbcDriverSparkInit` |
+
+For example, with the managed C API importer:
+
+```csharp
+using AdbcDriver driver = CAdbcDriverImporter.Load(libraryPath, "AdbcDriverImpalaInit");
+```
+
+With an ADBC driver manager, set its `entrypoint` option to the corresponding
+symbol. Use the connection options for the selected managed driver.
+
+**Breaking change:** the former `AdbcDriverInit` export has been renamed to
+`AdbcDriverHiveServer2Init`. Existing native consumers must update their entry
+point selection; there is no longer a generic `AdbcDriverInit` export.
+
 ## Cancellation
 
 On standard (TCP, including TLS/SASL) connections, cancelling or timing out an

@@ -1,9 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!--
-    The real HiveServer2 ADBC driver, NativeAOT-compiled into a shared library
-    that exports `AdbcDriverInit` (delegating to CAdbcDriverExporter wrapped
-    around a fresh HiveServer2Driver), and shipped as a native NuGet package
-    under runtimes/<rid>/native/.
+    The HiveServer2, Impala, and Spark ADBC drivers, NativeAOT-compiled into a
+    shared library that exports `AdbcDriverHiveServer2Init`,
+    `AdbcDriverImpalaInit`, and `AdbcDriverSparkInit` (each delegating to
+    CAdbcDriverExporter with the corresponding managed driver), and shipped
+    as a native NuGet package under runtimes/<rid>/native/.
 
     Two distinct flows:
       * `dotnet publish -c Release -r <rid>` produces the native shared library
